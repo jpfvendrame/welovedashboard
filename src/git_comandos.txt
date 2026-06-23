@@ -1,0 +1,5 @@
+git add .
+git commit -m "descreva o que mudou"
+git push
+
+(Comandos para atualizar o código no GitHub)
