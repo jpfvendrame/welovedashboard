@@ -505,7 +505,7 @@ function Overview({ ecoKey, M, theme, onSelect }) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
       <div>
-        <div style={{fontSize:mob?16:18,fontWeight:700,color:D.t0,fontFamily:F.h}}>Olá, We Lover! 👋</div>
+        <div style={{fontSize:mob?16:18,fontWeight:700,color:D.t0,fontFamily:F.h}}>Olá, We Worker! 👋</div>
         <div style={{fontSize:11,color:D.t1,marginTop:3}}>Aqui está o desempenho das suas automações ManyChat.</div>
       </div>
 
