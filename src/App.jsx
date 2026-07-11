@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from "react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
@@ -26,8 +26,8 @@ const PALETTES = {
   dark: {
     bg:   "#080808",
     bg1:  "#0E0E0E",
-    bg2:  "#141414",
-    bg3:  "#1A1A1A",
+    bg2:  "#0D0D0D",
+    bg3:  "#161616",
     bdr:  "rgba(255,255,255,0.07)",
     bdr2: "rgba(255,255,255,0.12)",
     t0:   "#F0EEF6",
@@ -60,9 +60,10 @@ function useD() {
   return PALETTES[theme];
 }
 
+// Space Grotesk = display/números · Inter = corpo · DM Mono = dados/labels
 const F = {
-  h: "'Montserrat', system-ui, sans-serif",
-  b: "'Montserrat', system-ui, sans-serif",
+  h: "'Space Grotesk', system-ui, sans-serif",
+  b: "'Inter', system-ui, sans-serif",
   m: "'DM Mono', 'Fira Mono', monospace",
 };
 
@@ -159,38 +160,76 @@ function useData(url){
   return {...st,reload:load};
 }
 
+// ─── MOTION HELPERS ──────────────────────────────────────────────────────────
+const prefersReduced = () =>
+  typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+// Número que conta até o valor final (easeOutCubic). Respeita reduced-motion.
+function AnimatedNumber({ value, format = (n)=>fmtNum(Math.round(n)), duration = 850, delay = 0 }) {
+  const [v, setV] = useState(() => prefersReduced() ? value : 0);
+  useEffect(() => {
+    if (prefersReduced()) { setV(value); return; }
+    let raf, start;
+    const tick = (t) => {
+      if (start === undefined) start = t;
+      const p = Math.min((t - start - delay) / duration, 1);
+      if (p < 0) { raf = requestAnimationFrame(tick); return; }
+      setV(value * (1 - Math.pow(1 - p, 3)));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value, duration, delay]);
+  return <>{format(v)}</>;
+}
+
+// Barra de progresso que preenche a partir do zero, com stagger opcional
+function Bar({ value, fill, track, height = 4, radius = 2, delay = 0 }) {
+  const [w, setW] = useState(() => prefersReduced() ? value : 0);
+  useEffect(() => {
+    if (prefersReduced()) { setW(value); return; }
+    const id = setTimeout(() => setW(value), 60 + delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return (
+    <div style={{height, background:track, borderRadius:radius, overflow:"hidden"}}>
+      <div style={{height:"100%", borderRadius:radius, width:`${Math.min(w,100)}%`,
+        background:fill, transition:"width .8s cubic-bezier(.22,.68,.4,1)"}}/>
+    </div>
+  );
+}
+
 // ─── THEME TOGGLE ─────────────────────────────────────────────────────────────
 function ThemeToggle({ mode, onChange }) {
-  const D = useD();
   const isDark = mode === "dark";
   return (
     <button
       onClick={() => onChange(isDark ? "light" : "dark")}
-      title={isDark ? "Modo claro" : "Modo escuro"}
+      title={isDark ? "Ativar modo claro" : "Ativar modo escuro"}
+      aria-label={isDark ? "Ativar modo claro" : "Ativar modo escuro"}
+      className="zf-focus"
       style={{
-        width:44, height:24, borderRadius:12, padding:0,
+        width:46, height:25, borderRadius:13, padding:0,
         border:`1px solid ${isDark?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.15)"}`,
         background: isDark ? "#1E1E2E" : "#E4E2F0",
         cursor:"pointer", transition:"background .25s, border-color .25s",
-        position:"relative", flexShrink:0, outline:"none",
+        position:"relative", flexShrink:0,
       }}
     >
-      {/* Track icons */}
       <i className="ti ti-sun" style={{
-        position:"absolute", left:5, top:"50%", transform:"translateY(-50%)",
+        position:"absolute", left:6, top:"50%", transform:"translateY(-50%)",
         fontSize:10, color: isDark ? "rgba(255,255,255,0.2)" : "#7C6CD0",
         transition:"color .25s",
       }}/>
       <i className="ti ti-moon" style={{
-        position:"absolute", right:5, top:"50%", transform:"translateY(-50%)",
+        position:"absolute", right:6, top:"50%", transform:"translateY(-50%)",
         fontSize:10, color: isDark ? "#A78BFA" : "rgba(0,0,0,0.2)",
         transition:"color .25s",
       }}/>
-      {/* Thumb */}
       <div style={{
         position:"absolute", top:2,
-        left: isDark ? 22 : 2,
-        width:18, height:18, borderRadius:"50%",
+        left: isDark ? 23 : 2,
+        width:19, height:19, borderRadius:"50%",
         background: isDark ? "#A78BFA" : "#7C6CD0",
         transition:"left .25s cubic-bezier(.4,0,.2,1)",
         boxShadow:"0 1px 4px rgba(0,0,0,0.3)",
@@ -208,18 +247,35 @@ function Divider() {
 function Tag({ children, color }) {
   return (
     <span style={{
-      fontSize:9, fontWeight:700, fontFamily:F.m, letterSpacing:"0.07em",
-      textTransform:"uppercase", padding:"3px 8px", borderRadius:6,
-      background:gl(color,0.15), color, border:`1px solid ${gl(color,0.3)}`,
+      fontSize:9, fontWeight:600, fontFamily:F.m, letterSpacing:"0.07em",
+      textTransform:"uppercase", padding:"3px 9px", borderRadius:20,
+      background:gl(color,0.13), color, border:`1px solid ${gl(color,0.28)}`,
+      whiteSpace:"nowrap",
     }}>{children}</span>
+  );
+}
+
+// Chip de metadado (usado no hero do overview)
+function MetaChip({ icon, color, children }) {
+  const D = useD();
+  return (
+    <span style={{display:"inline-flex", alignItems:"center", gap:6,
+      background:D.bg2, border:`1px solid ${D.bdr}`, borderRadius:20,
+      padding:"5px 12px", fontSize:10, color:D.t1, fontFamily:F.m,
+      whiteSpace:"nowrap"}}>
+      <i className={`ti ${icon}`} style={{fontSize:11, color}}/>
+      {children}
+    </span>
   );
 }
 
 function IconBox({ icon, color, size=36 }) {
   return (
     <div style={{
-      width:size, height:size, borderRadius:10, flexShrink:0,
-      background:gl(color,0.12),
+      width:size, height:size, borderRadius:size*0.3, flexShrink:0,
+      background:`linear-gradient(145deg, ${gl(color,0.18)}, ${gl(color,0.06)})`,
+      border:`1px solid ${gl(color,0.22)}`,
+      boxShadow:`inset 0 1px 0 ${gl(color,0.15)}`,
       display:"flex", alignItems:"center", justifyContent:"center",
       color, fontSize:size*0.45,
     }}>
@@ -228,32 +284,64 @@ function IconBox({ icon, color, size=36 }) {
   );
 }
 
-// ─── STAT CARD ───────────────────────────────────────────────────────────────
-function StatCard({ icon, label, value, sub, color }) {
+// Painel base: vidro elevado + hover lift + glow na cor do tema
+function Panel({ color, children, style, className="", hoverable=true }) {
   const D = useD();
   return (
-    <div style={{
-      background:D.bg2, border:`1px solid ${D.bdr}`, borderRadius:12,
-      padding:"14px 16px", display:"flex", alignItems:"center", gap:14,
-      position:"relative", overflow:"hidden",
-      boxShadow:`0 1px 4px ${D.shadow}`,
-    }}>
-      <div style={{position:"absolute", top:0, left:0, right:0, height:2,
-        background:`linear-gradient(90deg,${color},${gl(color,0)})`, opacity:0.8}}/>
-      <IconBox icon={icon} color={color} size={38}/>
-      <div style={{flex:1, minWidth:0}}>
-        <div style={{fontSize:9, fontWeight:600, fontFamily:F.m, letterSpacing:"0.1em",
-          textTransform:"uppercase", color:D.t2, marginBottom:4}}>{label}</div>
-        <div style={{fontSize:22, fontWeight:700, lineHeight:1, color:D.t0,
-          letterSpacing:"-0.02em", fontFamily:F.h}}>{value}</div>
-        {sub && <div style={{fontSize:10, color:D.t1, marginTop:3}}>{sub}</div>}
-      </div>
+    <div
+      className={`${hoverable?"zf-card":""} ${className}`}
+      style={{
+        background:D.bg2, border:`1px solid ${D.bdr}`, borderRadius:16,
+        overflow:"hidden", boxShadow:`0 1px 4px ${D.shadow}`,
+        "--glow": color ? gl(color,0.10) : "rgba(0,0,0,0.2)",
+        "--bdr-hover": color ? gl(color,0.3) : D.bdr2,
+        ...style,
+      }}
+    >
+      {children}
     </div>
   );
 }
 
+function PanelHeader({ title, sub, right, accent }) {
+  const D = useD();
+  return (
+    <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+      gap:12, padding:"16px 20px", borderBottom:`1px solid ${D.bdr}`}}>
+      <div style={{minWidth:0, display:"flex", gap:10, alignItems:"stretch"}}>
+        {accent && <span aria-hidden="true" style={{width:3, borderRadius:2, flexShrink:0,
+          background:`linear-gradient(180deg, ${accent}, ${gl(accent,0.15)})`}}/>}
+        <div>
+          <div style={{fontSize:13, fontWeight:600, color:D.t0, fontFamily:F.h, letterSpacing:"-0.01em"}}>{title}</div>
+          {sub && <div style={{fontSize:10.5, color:D.t2, marginTop:3}}>{sub}</div>}
+        </div>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+// ─── STAT CARD ───────────────────────────────────────────────────────────────
+function StatCard({ icon, label, value, sub, color }) {
+  const D = useD();
+  return (
+    <Panel color={color} style={{padding:"16px 18px", display:"flex", alignItems:"center",
+      gap:14}}>
+      <IconBox icon={icon} color={color} size={40}/>
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{fontSize:9, fontWeight:500, fontFamily:F.m, letterSpacing:"0.11em",
+          textTransform:"uppercase", color:D.t2, marginBottom:5}}>{label}</div>
+        <div style={{fontSize:24, fontWeight:700, lineHeight:1, color:D.t0,
+          letterSpacing:"-0.03em", fontFamily:F.h, fontVariantNumeric:"tabular-nums"}}>{value}</div>
+        {sub && <div style={{fontSize:10.5, color:D.t1, marginTop:4,
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{sub}</div>}
+      </div>
+    </Panel>
+  );
+}
+
 // ─── AREA CHART ──────────────────────────────────────────────────────────────
-function FunnelAreaChart({ campKey, info, M, color }) {
+function FunnelAreaChart({ campKey, info, M, color, animBegin = 0 }) {
   const D = useD();
   const vals = info.cols.map(c => M[c] ?? 0);
   const data = info.etapas.map((name,i) => ({ name, value:vals[i] }));
@@ -261,12 +349,13 @@ function FunnelAreaChart({ campKey, info, M, color }) {
   const TT = ({ active, payload }) => {
     if (!active||!payload?.length) return null;
     return (
-      <div style={{background:D.bg3, border:`1px solid ${D.bdr2}`, borderRadius:8,
-        padding:"10px 14px", fontFamily:F.b, boxShadow:`0 4px 12px ${D.shadow}`}}>
+      <div style={{background:D.bg3, border:`1px solid ${D.bdr2}`, borderRadius:10,
+        padding:"10px 14px", fontFamily:F.b, boxShadow:`0 8px 24px ${D.shadow}`}}>
         <div style={{fontSize:10, color:D.t1, marginBottom:3}}>{payload[0].payload.name}</div>
-        <div style={{fontSize:16, fontWeight:600, color:D.t0}}>{fmtNum(payload[0].value)}</div>
-        <div style={{fontSize:9, fontFamily:F.m, color:D.t2, marginTop:2}}>
-          {fmtPct(vals[0], payload[0].value)}
+        <div style={{fontSize:16, fontWeight:600, color:D.t0, fontFamily:F.h,
+          fontVariantNumeric:"tabular-nums"}}>{fmtNum(payload[0].value)}</div>
+        <div style={{fontSize:9, fontFamily:F.m, color:gl(color,0.85), marginTop:2}}>
+          {fmtPct(vals[0], payload[0].value)} do topo
         </div>
       </div>
     );
@@ -277,16 +366,19 @@ function FunnelAreaChart({ campKey, info, M, color }) {
         <AreaChart data={data} margin={{top:8,right:8,bottom:0,left:-20}}>
           <defs>
             <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity={0.3}/>
+              <stop offset="0%" stopColor={color} stopOpacity={0.32}/>
               <stop offset="100%" stopColor={color} stopOpacity={0}/>
             </linearGradient>
           </defs>
           <CartesianGrid vertical={false} stroke={D.bdr}/>
           <XAxis dataKey="name" tick={{fontSize:9,fill:D.t2,fontFamily:F.m}} axisLine={false} tickLine={false}/>
           <YAxis tick={{fontSize:9,fill:D.t2,fontFamily:F.m}} axisLine={false} tickLine={false} tickFormatter={v=>fmtNum(v)}/>
-          <Tooltip content={<TT/>}/>
-          <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2}
-            fill={`url(#${id})`} dot={{fill:color,strokeWidth:0,r:3}} activeDot={{r:5,fill:color}}/>
+          <Tooltip content={<TT/>} cursor={{stroke:gl(color,0.3), strokeDasharray:"3 3"}}/>
+          <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2.5}
+            isAnimationActive={!prefersReduced()}
+            animationDuration={900} animationBegin={animBegin} animationEasing="ease-out"
+            fill={`url(#${id})`} dot={{fill:color,strokeWidth:0,r:3}}
+            activeDot={{r:5.5,fill:color,stroke:D.bg2,strokeWidth:2}}/>
         </AreaChart>
       </ResponsiveContainer>
     </div>
@@ -303,24 +395,29 @@ function DonutChart({ labels, values, colors }) {
     if (!active||!payload?.length) return null;
     const p = payload[0];
     return (
-      <div style={{background:D.bg3, border:`1px solid ${D.bdr2}`, borderRadius:8,
-        padding:"10px 14px", boxShadow:`0 4px 12px ${D.shadow}`}}>
+      <div style={{background:D.bg3, border:`1px solid ${D.bdr2}`, borderRadius:10,
+        padding:"10px 14px", boxShadow:`0 8px 24px ${D.shadow}`}}>
         <div style={{fontSize:10,color:D.t1,marginBottom:2}}>{p.name}</div>
-        <div style={{fontSize:15,fontWeight:600,color:D.t0}}>{fmtNum(p.value)}</div>
+        <div style={{fontSize:15,fontWeight:600,color:D.t0,fontFamily:F.h,
+          fontVariantNumeric:"tabular-nums"}}>{fmtNum(p.value)}</div>
         <div style={{fontSize:9,fontFamily:F.m,color:D.t2,marginTop:2}}>{fmtPct(total,p.value)}</div>
       </div>
     );
   };
   return (
     <div style={{display:"flex", alignItems:"center", gap:24}}>
-      <div style={{position:"relative", width:130, height:130, flexShrink:0}}>
-        <ResponsiveContainer width={130} height={130}>
+      <div style={{position:"relative", width:134, height:134, flexShrink:0}}>
+        <ResponsiveContainer width={134} height={134}>
           <PieChart>
             <Pie data={data} dataKey="value" cx="50%" cy="50%"
-              innerRadius="58%" outerRadius="80%" paddingAngle={2} strokeWidth={0}
+              innerRadius="60%" outerRadius="82%" paddingAngle={3} strokeWidth={0}
+              cornerRadius={3}
+              isAnimationActive={!prefersReduced()} animationDuration={800}
               onMouseEnter={(_,i)=>setIdx(i)} onMouseLeave={()=>setIdx(null)}>
               {data.map((_,i)=>(
-                <Cell key={i} fill={colors[i%colors.length]} opacity={idx===null||idx===i?1:0.3}/>
+                <Cell key={i} fill={colors[i%colors.length]}
+                  opacity={idx===null||idx===i?1:0.28}
+                  style={{transition:"opacity .18s", cursor:"pointer"}}/>
               ))}
             </Pie>
             <Tooltip content={<TT/>}/>
@@ -328,23 +425,27 @@ function DonutChart({ labels, values, colors }) {
         </ResponsiveContainer>
         <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",
           alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-          <div style={{fontSize:18,fontWeight:600,color:D.t0,lineHeight:1,fontFamily:F.h}}>
-            {fmtNum(idx!==null?values[idx]:total)}
+          <div style={{fontSize:19,fontWeight:700,color:D.t0,lineHeight:1,fontFamily:F.h,
+            letterSpacing:"-0.02em",fontVariantNumeric:"tabular-nums"}}>
+            {idx!==null?fmtNum(values[idx]):<AnimatedNumber value={total}/>}
           </div>
-          <div style={{fontSize:7,fontFamily:F.m,color:D.t2,letterSpacing:"0.1em",marginTop:4,textTransform:"uppercase"}}>
+          <div style={{fontSize:7,fontFamily:F.m,color:D.t2,letterSpacing:"0.12em",marginTop:4,textTransform:"uppercase"}}>
             {idx!==null?labels[idx]:"total"}
           </div>
         </div>
       </div>
-      <div style={{flex:1,display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{flex:1,display:"flex",flexDirection:"column",gap:9}}>
         {labels.map((l,i)=>(
           <div key={i} style={{display:"flex",alignItems:"center",gap:8,
             opacity:idx===null||idx===i?1:0.35,transition:"opacity .15s",cursor:"default"}}
             onMouseEnter={()=>setIdx(i)} onMouseLeave={()=>setIdx(null)}>
-            <div style={{width:6,height:6,borderRadius:2,background:colors[i%colors.length],flexShrink:0}}/>
+            <div style={{width:7,height:7,borderRadius:2.5,background:colors[i%colors.length],flexShrink:0,
+              boxShadow:`0 0 4px ${gl(colors[i%colors.length],0.28)}`}}/>
             <div style={{flex:1,fontSize:11,color:D.t1}}>{l}</div>
-            <div style={{fontSize:11,fontFamily:F.m,fontWeight:600,color:D.t0}}>{fmtNum(values[i])}</div>
-            <div style={{fontSize:9,fontFamily:F.m,color:D.t2,width:34,textAlign:"right"}}>{fmtPct(total,values[i])}</div>
+            <div style={{fontSize:11,fontFamily:F.m,fontWeight:600,color:D.t0,
+              fontVariantNumeric:"tabular-nums"}}>{fmtNum(values[i])}</div>
+            <div style={{fontSize:9,fontFamily:F.m,color:D.t2,width:36,textAlign:"right",
+              fontVariantNumeric:"tabular-nums"}}>{fmtPct(total,values[i])}</div>
           </div>
         ))}
       </div>
@@ -357,30 +458,71 @@ function CampTableRow({ rank, name, icon, leads, conv, convClr, subLabel, subVal
   const D = useD();
   const [hov, setHov] = useState(false);
   return (
-    <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} onClick={onClick}
-      style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",
-        cursor:"pointer", background:hov?D.bg3:"transparent",
+    <button onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} onClick={onClick}
+      className="zf-focus zf-row"
+      style={{display:"flex",alignItems:"center",gap:14,padding:"13px 20px",width:"100%",
+        cursor:"pointer", background:hov?D.bg3:"transparent", border:"none",
         borderBottom:isLast?"none":`1px solid ${D.bdr}`,
-        transition:"background .12s"}}>
-      <div style={{fontSize:11,fontFamily:F.m,color:D.t2,width:16,flexShrink:0,textAlign:"center"}}>{rank}</div>
-      <IconBox icon={icon} color={color} size={32}/>
+        transition:"background .12s", textAlign:"left", fontFamily:F.b,
+        animationDelay:`${rank*60}ms`}}>
+      <div style={{fontSize:10,fontFamily:F.m,color:hov?gl(color,0.9):D.t2,width:18,flexShrink:0,
+        textAlign:"center",transition:"color .12s"}}>{String(rank).padStart(2,"0")}</div>
+      <IconBox icon={icon} color={color} size={34}/>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:12,fontWeight:600,color:D.t0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div>
-        <div style={{fontSize:10,color:D.t1,marginTop:2}}>{subLabel}: <span style={{color:D.t0,fontWeight:600}}>{fmtNum(subValue)}</span></div>
+        <div style={{fontSize:12.5,fontWeight:600,color:D.t0,overflow:"hidden",
+          textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div>
+        <div style={{fontSize:10,color:D.t1,marginTop:2}}>{subLabel}:{" "}
+          <span style={{color:D.t0,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmtNum(subValue)}</span></div>
       </div>
       <div style={{textAlign:"right",flexShrink:0}}>
-        <div style={{fontSize:14,fontWeight:700,color:D.t0,fontFamily:F.h}}>{fmtNum(leads)}</div>
+        <div style={{fontSize:14,fontWeight:700,color:D.t0,fontFamily:F.h,
+          fontVariantNumeric:"tabular-nums"}}>{fmtNum(leads)}</div>
         <div style={{fontSize:9,color:D.t2,fontFamily:F.m,marginTop:1}}>leads</div>
       </div>
       <div style={{textAlign:"right",width:52,flexShrink:0}}>
-        <div style={{fontSize:13,fontWeight:700,color:convClr,fontFamily:F.m}}>{conv}</div>
+        <div style={{fontSize:13,fontWeight:600,color:convClr,fontFamily:F.m,
+          fontVariantNumeric:"tabular-nums"}}>{conv}</div>
         <div style={{fontSize:9,color:D.t2,fontFamily:F.m,marginTop:1}}>conv.</div>
       </div>
       <div style={{width:60,flexShrink:0}}>
-        <div style={{height:3,background:gl(color,0.15),borderRadius:2,overflow:"hidden"}}>
-          <div style={{height:"100%",borderRadius:2,
-            width:`${Math.min(parseFloat(conv),100)}%`,
-            background:color,transition:"width .5s"}}/>
+        <Bar value={parseFloat(conv)} height={4} radius={2} delay={rank*120}
+          track={gl(color,0.14)}
+          fill={`linear-gradient(90deg,${gl(color,0.7)},${color})`}/>
+      </div>
+      <i className="ti ti-chevron-right" style={{fontSize:14,flexShrink:0,
+        color:hov?gl(color,0.9):D.t2, transform:hov?"translateX(2px)":"translateX(0)",
+        transition:"color .12s, transform .15s"}}/>
+    </button>
+  );
+}
+
+// ─── SKELETON (loading) ──────────────────────────────────────────────────────
+function Sk({ h=14, w="100%", r=8, style }) {
+  return <div className="zf-shimmer" style={{height:h,width:w,borderRadius:r,...style}}/>;
+}
+function LoadingSkeleton({ mob }) {
+  const D = useD();
+  const card = {background:D.bg2, border:`1px solid ${D.bdr}`, borderRadius:16, padding:18};
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:20}} aria-busy="true" aria-label="Carregando dados">
+      <div>
+        <Sk h={20} w={220}/><Sk h={11} w={300} style={{marginTop:10}}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"repeat(4,1fr)",gap:12}}>
+        {[0,1,2,3].map(i=>(
+          <div key={i} style={{...card, display:"flex", gap:14, alignItems:"center"}}>
+            <Sk h={40} w={40} r={12}/>
+            <div style={{flex:1}}><Sk h={9} w="60%"/><Sk h={20} w="45%" style={{marginTop:8}}/></div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"3fr 2fr",gap:14}}>
+        <div style={card}>
+          {[0,1,2].map(i=><Sk key={i} h={44} style={{marginBottom:i<2?12:0}}/>)}
+        </div>
+        <div style={{...card, display:"flex", alignItems:"center", gap:20}}>
+          <Sk h={120} w={120} r={"50%"}/>
+          <div style={{flex:1}}>{[0,1,2].map(i=><Sk key={i} h={11} style={{marginBottom:i<2?10:0}}/>)}</div>
         </div>
       </div>
     </div>
@@ -398,89 +540,95 @@ function FunnelDetail({ campKey, info, M, color, onBack }) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <button onClick={onBack}
-          style={{width:32,height:32,borderRadius:9,background:gl(color,0.1),
-            border:`1px solid ${gl(color,0.2)}`,display:"flex",alignItems:"center",
-            justifyContent:"center",color,cursor:"pointer",fontSize:14}}>
+      <div className="zf-in" style={{display:"flex",alignItems:"center",gap:11}}>
+        <button onClick={onBack} aria-label="Voltar para o dashboard" className="zf-focus"
+          style={{width:34,height:34,borderRadius:10,background:gl(color,0.1),
+            border:`1px solid ${gl(color,0.22)}`,display:"flex",alignItems:"center",
+            justifyContent:"center",color,cursor:"pointer",fontSize:15,
+            transition:"background .15s"}}
+          onMouseEnter={e=>{e.currentTarget.style.background=gl(color,0.18);}}
+          onMouseLeave={e=>{e.currentTarget.style.background=gl(color,0.1);}}>
           <i className="ti ti-arrow-left"/>
         </button>
-        <IconBox icon={info.icon} color={color} size={32}/>
+        <IconBox icon={info.icon} color={color} size={34}/>
         <div>
-          <div style={{fontSize:15,fontWeight:700,color:D.t0}}>{campKey}</div>
-          <div style={{fontSize:10,color:D.t1}}>Detalhe da automação</div>
+          <div style={{fontSize:16,fontWeight:700,color:D.t0,fontFamily:F.h,letterSpacing:"-0.01em"}}>{campKey}</div>
+          <div style={{fontSize:10.5,color:D.t1,marginTop:1}}>Detalhe da automação</div>
         </div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":`repeat(${Math.min(info.cols.length,5)},1fr)`,gap:10}}>
+      <div className="zf-in" style={{animationDelay:".05s",display:"grid",
+        gridTemplateColumns:mob?"1fr 1fr":`repeat(${Math.min(info.cols.length,5)},1fr)`,gap:10}}>
         {info.etapas.map((etapa,i)=>(
-          <div key={i} style={{background:i===0?gl(color,0.08):D.bg2,
+          <Panel key={i} color={color} style={{
+            background:i===0?gl(color,0.08):D.bg2,
             border:`1px solid ${i===0?gl(color,0.3):D.bdr}`,
-            borderRadius:12,padding:"16px 18px",position:"relative",overflow:"hidden",
-            boxShadow:`0 1px 4px ${D.shadow}`}}>
+            padding:"16px 18px",position:"relative"}}>
             {i===0&&<div style={{position:"absolute",top:0,left:0,right:0,height:2,
               background:`linear-gradient(90deg,${color},${gl(color,0)})`}}/>}
-            <div style={{fontSize:9,fontWeight:600,fontFamily:F.m,letterSpacing:"0.1em",
-              textTransform:"uppercase",color:i===0?gl(color,0.8):D.t2,marginBottom:8}}>{etapa}</div>
-            <div style={{fontSize:24,fontWeight:600,color:D.t0,lineHeight:1,fontFamily:F.h}}>{fmtNum(vals[i])}</div>
-            {i>0&&<div style={{marginTop:6}}><Tag color={color}>{fmtPct(topo,vals[i])} do topo</Tag></div>}
-          </div>
+            <div style={{fontSize:9,fontWeight:500,fontFamily:F.m,letterSpacing:"0.11em",
+              textTransform:"uppercase",color:i===0?gl(color,0.85):D.t2,marginBottom:9}}>{etapa}</div>
+            <div style={{fontSize:26,fontWeight:700,color:D.t0,lineHeight:1,fontFamily:F.h,
+              letterSpacing:"-0.03em",fontVariantNumeric:"tabular-nums"}}>
+              <AnimatedNumber value={vals[i]} delay={i*100}/>
+            </div>
+            {i>0&&<div style={{marginTop:8}}><Tag color={color}>{fmtPct(topo,vals[i])} do topo</Tag></div>}
+          </Panel>
         ))}
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"1fr 1fr",gap:14}}>
-        <div style={{background:D.bg2,border:`1px solid ${D.bdr}`,borderRadius:14,overflow:"hidden",
-          boxShadow:`0 1px 4px ${D.shadow}`}}>
-          <div style={{padding:"16px 20px",borderBottom:`1px solid ${D.bdr}`}}>
-            <div style={{fontSize:13,fontWeight:600,color:D.t0}}>Funil da automação</div>
-            <div style={{fontSize:10,color:D.t2,marginTop:3}}>Volume por etapa</div>
-          </div>
+      <div className="zf-in" style={{animationDelay:".1s",display:"grid",
+        gridTemplateColumns:mob?"1fr":"1fr 1fr",gap:14}}>
+        <Panel color={color}>
+          <PanelHeader title="Funil da automação" sub="Volume por etapa" accent={color}/>
           <div style={{padding:"12px 20px 16px"}}>
             <FunnelAreaChart campKey={campKey} info={info} M={M} color={color}/>
           </div>
-        </div>
+        </Panel>
 
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <div style={{background:D.bg2,border:`1px solid ${D.bdr}`,borderRadius:14,overflow:"hidden",flex:1,
-            boxShadow:`0 1px 4px ${D.shadow}`}}>
-            <div style={{padding:"16px 20px",borderBottom:`1px solid ${D.bdr}`}}>
-              <div style={{fontSize:13,fontWeight:600,color:D.t0}}>Conversão por etapa</div>
-              <div style={{fontSize:10,color:D.t2,marginTop:3}}>% do topo que chegou a cada passo</div>
-            </div>
+          <Panel color={color} style={{flex:1}}>
+            <PanelHeader title="Conversão por etapa" sub="% do topo que chegou a cada passo" accent={color}/>
             <div style={{padding:"8px 20px 14px"}}>
               {info.etapas.slice(1).map((e,i)=>{
                 const r=safePct(topo,vals[i+1]);
                 const clr=r>70?D.ok:r>40?color:r>20?D.warn:D.err;
                 return (
                   <div key={i}>
-                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
                       <div style={{fontSize:11,color:D.t1,flex:"0 0 130px",lineHeight:1.3}}>Topo → {e}</div>
-                      <div style={{flex:1,height:4,background:gl("#000",0.08),borderRadius:2,overflow:"hidden"}}>
-                        <div style={{width:`${Math.min(r,100)}%`,height:"100%",background:clr,borderRadius:2,transition:"width .5s"}}/>
+                      <div style={{flex:1}}>
+                        <Bar value={r} height={5} radius={3} delay={i*130}
+                          track={gl("#000",0.08)}
+                          fill={`linear-gradient(90deg,${gl(clr,0.7)},${clr})`}/>
                       </div>
-                      <div style={{fontSize:11,fontWeight:700,fontFamily:F.m,color:clr,width:42,textAlign:"right"}}>{r.toFixed(1)}%</div>
+                      <div style={{fontSize:11,fontWeight:600,fontFamily:F.m,color:clr,width:44,
+                        textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{r.toFixed(1)}%</div>
                     </div>
                     {i<info.etapas.length-2&&<Divider/>}
                   </div>
                 );
               })}
             </div>
-          </div>
+          </Panel>
 
-          <div style={{background:gl(color,0.07),border:`1px solid ${gl(color,0.22)}`,
-            borderRadius:14,padding:"18px 20px",position:"relative",overflow:"hidden",
-            boxShadow:`0 0 24px ${gl(color,0.08)}`}}>
+          <Panel color={color} style={{
+            background:gl(color,0.07),border:`1px solid ${gl(color,0.22)}`,
+            padding:"18px 20px",position:"relative",
+            boxShadow:`0 0 18px ${gl(color,0.06)}`}}>
             <div style={{position:"absolute",top:0,left:0,right:0,height:2,
               background:`linear-gradient(90deg,${color},${gl(color,0)})`}}/>
-            <div style={{fontSize:9,fontWeight:600,fontFamily:F.m,letterSpacing:"0.1em",
-              textTransform:"uppercase",color:gl(color,0.7),marginBottom:10}}>Conversão final</div>
-            <div style={{fontSize:38,fontWeight:700,color:convClr,letterSpacing:"-0.02em",
-              lineHeight:1,marginBottom:6,fontFamily:F.h}}>{finalConv.toFixed(1)}%</div>
-            <div style={{fontSize:11,color:D.t1}}>
-              <span style={{color:D.t0,fontWeight:600}}>{fmtNum(topo)}</span> entraram ·{" "}
-              <span style={{color:D.t0,fontWeight:600}}>{fmtNum(vals[vals.length-1])}</span> converteram
+            <div style={{fontSize:9,fontWeight:500,fontFamily:F.m,letterSpacing:"0.11em",
+              textTransform:"uppercase",color:gl(color,0.75),marginBottom:10}}>Conversão final</div>
+            <div style={{fontSize:42,fontWeight:700,color:convClr,letterSpacing:"-0.04em",
+              lineHeight:1,marginBottom:8,fontFamily:F.h,fontVariantNumeric:"tabular-nums"}}>
+              <AnimatedNumber value={finalConv} duration={1100} format={(n)=>`${n.toFixed(1)}%`}/>
             </div>
-          </div>
+            <div style={{fontSize:11,color:D.t1}}>
+              <span style={{color:D.t0,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmtNum(topo)}</span> entraram ·{" "}
+              <span style={{color:D.t0,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmtNum(vals[vals.length-1])}</span> converteram
+            </div>
+          </Panel>
         </div>
       </div>
     </div>
@@ -488,7 +636,7 @@ function FunnelDetail({ campKey, info, M, color, onBack }) {
 }
 
 // ─── OVERVIEW ────────────────────────────────────────────────────────────────
-function Overview({ ecoKey, M, theme, onSelect }) {
+function Overview({ ecoKey, M, theme, onSelect, timeStr }) {
   const D = useD();
   const mob = useIsMobile();
   const camps = Object.entries(CAMPANHAS[ecoKey]);
@@ -504,29 +652,47 @@ function Overview({ ecoKey, M, theme, onSelect }) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
-      <div>
-        <div style={{fontSize:mob?16:18,fontWeight:700,color:D.t0,fontFamily:F.h}}>Olá, We Worker! 👋</div>
-        <div style={{fontSize:11,color:D.t1,marginTop:3}}>Aqui está o desempenho das suas automações ManyChat.</div>
+      <div className="zf-in" style={{textAlign:"center",padding:"6px 0 2px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:10}}>
+          <span className="zf-live" style={{width:6,height:6,borderRadius:"50%",
+            background:theme.c0,flexShrink:0}}/>
+          <span style={{fontSize:9,fontWeight:600,fontFamily:F.m,letterSpacing:"0.16em",
+            textTransform:"uppercase",color:gl(theme.c0,0.85)}}>
+            Visão geral · {theme.name}
+          </span>
+        </div>
+        <div style={{fontSize:mob?27:34,fontWeight:700,fontFamily:F.h,
+          letterSpacing:"-0.03em",lineHeight:1.05,width:"fit-content",
+          margin:"0 auto",
+          background:`linear-gradient(115deg, ${D.t0} 45%, ${theme.c0} 100%)`,
+          WebkitBackgroundClip:"text",backgroundClip:"text",
+          WebkitTextFillColor:"transparent",color:"transparent"}}>
+          Olá, We Worker!
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:8,marginTop:14}}>
+          <MetaChip icon="ti-bolt" color={theme.c0}>
+            {camps.length} campanha{camps.length>1?"s":""} ativa{camps.length>1?"s":""}
+          </MetaChip>
+          {timeStr && (
+            <MetaChip icon="ti-clock" color={D.ok}>Atualizado às {timeStr}</MetaChip>
+          )}
+          <MetaChip icon="ti-plug-connected" color={theme.c1}>ManyChat · Google Sheets</MetaChip>
+        </div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"repeat(4,1fr)",gap:12}}>
-        <StatCard icon="ti-users" label="Total na base" value={fmtNum(total)} sub="entradas nos funis" color={theme.c0}/>
-        <StatCard icon="ti-brand-whatsapp" label="Conversões" value={fmtNum(totalConv)} sub={`${fmtPct(total,totalConv)} do total`} color={D.ok}/>
-        <StatCard icon="ti-trophy" label="Melhor campanha" value={`${bestCamp.conv?.toFixed(1)}%`} sub={bestCamp.key} color={theme.c1}/>
-        <StatCard icon="ti-bolt" label="Campanhas ativas" value={String(camps.length)} sub="automações ManyChat" color={theme.c2}/>
+      <div className="zf-in" style={{animationDelay:".05s",display:"grid",
+        gridTemplateColumns:mob?"1fr 1fr":"repeat(4,1fr)",gap:12}}>
+        <StatCard icon="ti-users" label="Total na base" value={<AnimatedNumber value={total}/>} sub="entradas nos funis" color={theme.c0}/>
+        <StatCard icon="ti-brand-whatsapp" label="Conversões" value={<AnimatedNumber value={totalConv} delay={100}/>} sub={`${fmtPct(total,totalConv)} do total`} color={D.ok}/>
+        <StatCard icon="ti-trophy" label="Melhor campanha" value={<AnimatedNumber value={bestCamp.conv??0} delay={200} format={(n)=>`${n.toFixed(1)}%`}/>} sub={bestCamp.key} color={theme.c1}/>
+        <StatCard icon="ti-bolt" label="Campanhas ativas" value={<AnimatedNumber value={camps.length} delay={300} duration={600}/>} sub="automações ManyChat" color={theme.c2}/>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"3fr 2fr",gap:14}}>
-        <div style={{background:D.bg2,border:`1px solid ${D.bdr}`,borderRadius:14,overflow:"hidden",
-          boxShadow:`0 1px 4px ${D.shadow}`}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-            padding:"16px 20px",borderBottom:`1px solid ${D.bdr}`}}>
-            <div>
-              <div style={{fontSize:13,fontWeight:700,color:D.t0}}>Top Campanhas</div>
-              <div style={{fontSize:10,color:D.t2,marginTop:3}}>Clique para ver o detalhe</div>
-            </div>
-            <Tag color={theme.c0}>ManyChat</Tag>
-          </div>
+      <div className="zf-in" style={{animationDelay:".1s",display:"grid",
+        gridTemplateColumns:mob?"1fr":"3fr 2fr",gap:14}}>
+        <Panel color={theme.c0}>
+          <PanelHeader title="Top Campanhas" sub="Clique em uma campanha para ver o detalhe" accent={theme.c0}
+            right={<Tag color={theme.c0}>ManyChat</Tag>}/>
           {camps.map(([key,info],i)=>{
             const leads=M[info.cols[0]]??0;
             const subV=M[info.kpi_sub_col]??0;
@@ -540,50 +706,38 @@ function Overview({ ecoKey, M, theme, onSelect }) {
                 onClick={()=>onSelect(key)} isLast={i===camps.length-1}/>
             );
           })}
-        </div>
+        </Panel>
 
-        <div style={{background:D.bg2,border:`1px solid ${D.bdr}`,borderRadius:14,overflow:"hidden",
-          boxShadow:`0 1px 4px ${D.shadow}`}}>
-          <div style={{padding:"16px 20px",borderBottom:`1px solid ${D.bdr}`}}>
-            <div style={{fontSize:13,fontWeight:700,color:D.t0}}>Distribuição</div>
-            <div style={{fontSize:10,color:D.t2,marginTop:3}}>Participação percentual por campanha</div>
-          </div>
+        <Panel color={theme.c0}>
+          <PanelHeader title="Distribuição" sub="Participação percentual por campanha" accent={theme.c0}/>
           <div style={{padding:"20px"}}>
             <DonutChart labels={cLabels} values={cVals} colors={colors}/>
           </div>
-        </div>
+        </Panel>
       </div>
 
-      <div style={{background:D.bg2,border:`1px solid ${D.bdr}`,borderRadius:14,overflow:"hidden",
-        boxShadow:`0 1px 4px ${D.shadow}`}}>
-        <div style={{padding:"16px 20px",borderBottom:`1px solid ${D.bdr}`}}>
-          <div style={{fontSize:13,fontWeight:700,color:D.t0}}>Funis por automação</div>
-          <div style={{fontSize:10,color:D.t2,marginTop:3}}>Volume relativo ao topo de cada campanha</div>
-        </div>
+      <Panel color={theme.c0} className="zf-in" style={{animationDelay:".15s"}}>
+        <PanelHeader title="Funis por automação" sub="Volume relativo ao topo de cada campanha" accent={theme.c0}/>
         <div style={{padding:"20px",display:"grid",
           gridTemplateColumns:mob?"1fr":"repeat(auto-fit,minmax(220px,1fr))",gap:24}}>
           {camps.map(([key,info],i)=>{
             const clr=colors[i%colors.length];
             return (
               <div key={key}>
-                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
                   <IconBox icon={info.icon} color={clr} size={24}/>
-                  <span style={{fontSize:10,fontWeight:700,fontFamily:F.m,
-                    letterSpacing:"0.08em",textTransform:"uppercase",color:D.t2}}>{key.split(" ")[0]}</span>
+                  <span style={{fontSize:10,fontWeight:600,fontFamily:F.m,
+                    letterSpacing:"0.09em",textTransform:"uppercase",color:D.t2}}>{key.split(" ")[0]}</span>
                 </div>
-                <FunnelAreaChart campKey={key} info={info} M={M} color={clr}/>
+                <FunnelAreaChart campKey={key} info={info} M={M} color={clr} animBegin={i*180}/>
               </div>
             );
           })}
         </div>
-      </div>
+      </Panel>
 
-      <div style={{background:D.bg2,border:`1px solid ${D.bdr}`,borderRadius:14,overflow:"hidden",
-        boxShadow:`0 1px 4px ${D.shadow}`}}>
-        <div style={{padding:"16px 20px",borderBottom:`1px solid ${D.bdr}`}}>
-          <div style={{fontSize:13,fontWeight:700,color:D.t0}}>Taxas de conversão</div>
-          <div style={{fontSize:10,color:D.t2,marginTop:3}}>% do topo que avançou em cada etapa</div>
-        </div>
+      <Panel color={theme.c0} className="zf-in" style={{animationDelay:".2s"}}>
+        <PanelHeader title="Taxas de conversão" sub="% do topo que avançou em cada etapa" accent={theme.c0}/>
         <div style={{padding:"8px 20px 16px",display:"grid",
           gridTemplateColumns:mob?"1fr":"1fr 1fr",gap:"0 40px"}}>
           {camps.flatMap(([key,info],ci)=>{
@@ -594,17 +748,21 @@ function Overview({ ecoKey, M, theme, onSelect }) {
               const rClr=r>70?D.ok:r>40?clr:r>20?D.warn:D.err;
               return (
                 <div key={`${key}${i}`}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:5,flex:"0 0 170px"}}>
-                      <span style={{width:5,height:5,borderRadius:"50%",background:clr,flexShrink:0}}/>
+                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flex:"0 0 170px"}}>
+                      <span style={{width:6,height:6,borderRadius:"50%",background:clr,flexShrink:0,
+                        boxShadow:`0 0 4px ${gl(clr,0.28)}`}}/>
                       <span style={{fontSize:11,color:D.t1,lineHeight:1.3}}>
                         {key.split(" ")[0]} → {info.etapas[i+1]}
                       </span>
                     </div>
-                    <div style={{flex:1,height:4,background:gl("#000",0.07),borderRadius:2,overflow:"hidden"}}>
-                      <div style={{width:`${Math.min(r,100)}%`,height:"100%",background:rClr,borderRadius:2,transition:"width .5s"}}/>
+                    <div style={{flex:1}}>
+                      <Bar value={r} height={5} radius={3} delay={(ci*3+i)*70}
+                        track={gl("#000",0.07)}
+                        fill={`linear-gradient(90deg,${gl(rClr,0.7)},${rClr})`}/>
                     </div>
-                    <span style={{fontSize:11,fontWeight:700,fontFamily:F.m,color:rClr,width:42,textAlign:"right"}}>
+                    <span style={{fontSize:11,fontWeight:600,fontFamily:F.m,color:rClr,width:44,
+                      textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
                       {r>0?`${r.toFixed(1)}%`:"—"}
                     </span>
                   </div>
@@ -614,7 +772,7 @@ function Overview({ ecoKey, M, theme, onSelect }) {
             });
           })}
         </div>
-      </div>
+      </Panel>
     </div>
   );
 }
@@ -625,19 +783,24 @@ function SidebarItem({ icon, label, count, active, onClick, color }) {
   const [hov, setHov] = useState(false);
   return (
     <button onClick={onClick} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
-      style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",width:"100%",
-        fontSize:12,fontWeight:active?600:400,
+      className="zf-focus"
+      style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",
+        width:"calc(100% - 16px)",margin:"0 8px 2px",borderRadius:10,
+        fontSize:12,fontWeight:active?600:450,
         color:active?D.t0:hov?D.t0:D.t1,
         background:active?gl(color,0.12):hov?gl(color,0.05):"transparent",
-        borderLeft:`2px solid ${active?color:"transparent"}`,
-        border:"none",cursor:"pointer",transition:"all .15s",
-        textAlign:"left",fontFamily:F.b,
-        transform:hov&&!active?"translateX(3px)":"translateX(0)"}}>
-      <i className={`ti ${icon}`} style={{fontSize:15,flexShrink:0,color:active?color:"inherit"}}/>
-      <span style={{flex:1}}>{label}</span>
+        border:`1px solid ${active?gl(color,0.22):"transparent"}`,
+        cursor:"pointer",transition:"all .15s",
+        textAlign:"left",fontFamily:F.b}}>
+      <i className={`ti ${icon}`} style={{fontSize:15,flexShrink:0,
+        color:active?color:"inherit",
+        filter:active?`drop-shadow(0 0 4px ${gl(color,0.3)})`:"none"}}/>
+      <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
       {count&&(
-        <span style={{fontSize:9,fontFamily:F.m,fontWeight:700,color:D.t2,
-          background:gl("#888",0.1),padding:"2px 7px",borderRadius:8}}>{count}</span>
+        <span style={{fontSize:9,fontFamily:F.m,fontWeight:600,
+          color:active?gl(color,0.95):D.t2,
+          background:active?gl(color,0.14):gl("#888",0.1),
+          padding:"2px 7px",borderRadius:20,fontVariantNumeric:"tabular-nums"}}>{count}</span>
       )}
     </button>
   );
@@ -646,6 +809,7 @@ function SidebarItem({ icon, label, count, active, onClick, color }) {
 // ─── ECOSYSTEM PAGE ───────────────────────────────────────────────────────────
 function EcosystemPage({ ecoKey }) {
   const D = useD();
+  const mode = useTheme();
   const theme = THEMES[ecoKey];
   const { rows, boolCols, error, loading, lastSync, reload } = useData(URLS[ecoKey]);
   const [sel, setSel] = useState("overview");
@@ -659,41 +823,59 @@ function EcosystemPage({ ecoKey }) {
     ? theme.c0
     : colors[camps.findIndex(([k])=>k===sel)%colors.length] ?? theme.c0;
 
+  // Volta ao topo ao navegar entre Dashboard e detalhe (evita entrar no meio da página)
+  const scrollRef = useRef(null);
+  useEffect(() => { scrollRef.current?.scrollTo({ top:0 }); }, [sel]);
+
+  // Esc fecha a sidebar no mobile
+  useEffect(() => {
+    if (!sideOpen) return;
+    const fn = (e) => { if (e.key === "Escape") setSideOpen(false); };
+    window.addEventListener("keydown", fn);
+    return () => window.removeEventListener("keydown", fn);
+  }, [sideOpen]);
+
   return (
     <div style={{display:"flex",flex:1,minHeight:0}}>
       {mob&&sideOpen&&(
         <div onClick={()=>setSideOpen(false)}
-          style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:80}}/>
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",
+            backdropFilter:"blur(2px)",zIndex:80}}/>
       )}
 
       <nav style={{
-        width:224,flexShrink:0,background:D.bg1,
+        width:230,flexShrink:0,background:D.bg1,
         borderRight:`1px solid ${D.bdr}`,display:"flex",flexDirection:"column",
         ...(mob?{position:"fixed",top:0,left:0,bottom:0,zIndex:90,
           transform:sideOpen?"translateX(0)":"translateX(-100%)",
-          transition:"transform 0.25s cubic-bezier(.4,0,.2,1)"}:
+          transition:"transform 0.25s cubic-bezier(.4,0,.2,1)",
+          boxShadow:sideOpen?`8px 0 32px ${D.shadow}`:"none"}:
           {position:"sticky",top:58,height:"calc(100vh - 58px)",overflow:"hidden auto"})
       }}>
         <div style={{padding:"18px 16px 14px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,
-            background:gl(theme.c0,0.08),border:`1px solid ${gl(theme.c0,0.2)}`,
-            borderRadius:10,padding:"10px 12px"}}>
-            <div style={{width:32,height:32,borderRadius:8,flexShrink:0,
+          <div style={{display:"flex",alignItems:"center",gap:11,
+            background:`linear-gradient(135deg, ${gl(theme.c0,0.12)}, ${gl(theme.c3,0.06)})`,
+            border:`1px solid ${gl(theme.c0,0.22)}`,
+            borderRadius:12,padding:"11px 12px",
+            boxShadow:`inset 0 1px 0 ${gl(theme.c0,0.1)}`}}>
+            <div style={{width:34,height:34,borderRadius:10,flexShrink:0,
               background:`linear-gradient(135deg,${theme.c0},${theme.c3})`,
               display:"flex",alignItems:"center",justifyContent:"center",
-              fontSize:15,fontWeight:700,color:"#fff",fontFamily:"Georgia,serif",
-              boxShadow:`0 0 12px ${gl(theme.c0,0.3)}`}}>{theme.avatar}</div>
-            <div>
-              <div style={{fontSize:12,fontWeight:700,color:D.t0,fontFamily:F.h}}>{theme.name}</div>
-              <div style={{fontSize:8,color:D.t2,fontFamily:F.m,letterSpacing:"0.07em",marginTop:1}}>WE LOVE · ANALYTICS</div>
+              fontSize:15,fontWeight:700,color:"#fff",fontFamily:F.h,
+              boxShadow:`0 0 9px ${gl(theme.c0,0.25)}`}}>{theme.avatar}</div>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:700,color:D.t0,fontFamily:F.h,
+                letterSpacing:"-0.01em",overflow:"hidden",textOverflow:"ellipsis",
+                whiteSpace:"nowrap"}}>{theme.name}</div>
+              <div style={{fontSize:8,color:D.t2,fontFamily:F.m,letterSpacing:"0.09em",marginTop:2}}>WE LOVE · ANALYTICS</div>
             </div>
           </div>
         </div>
 
         <Divider/>
         <div style={{padding:"10px 0 6px"}}>
-          <div style={{fontSize:8,fontWeight:700,fontFamily:F.m,letterSpacing:"0.12em",
-            textTransform:"uppercase",color:D.t2,padding:"0 16px 8px"}}>Visão geral</div>
+          <div style={{fontSize:8,fontWeight:600,fontFamily:F.m,letterSpacing:"0.14em",
+            textTransform:"uppercase",color:D.t2,padding:"0 20px 8px"}}>Visão geral</div>
           <SidebarItem icon="ti-layout-dashboard" label="Dashboard"
             active={sel==="overview"} onClick={()=>{setSel("overview");if(mob)setSideOpen(false);}}
             color={theme.c0}/>
@@ -701,8 +883,8 @@ function EcosystemPage({ ecoKey }) {
 
         <Divider/>
         <div style={{padding:"10px 0 6px"}}>
-          <div style={{fontSize:8,fontWeight:700,fontFamily:F.m,letterSpacing:"0.12em",
-            textTransform:"uppercase",color:D.t2,padding:"0 16px 8px"}}>Campanhas</div>
+          <div style={{fontSize:8,fontWeight:600,fontFamily:F.m,letterSpacing:"0.14em",
+            textTransform:"uppercase",color:D.t2,padding:"0 20px 8px"}}>Campanhas</div>
           {camps.map(([key,info],i)=>{
             const count=M[info.cols[0]]??0;
             return (
@@ -719,18 +901,19 @@ function EcosystemPage({ ecoKey }) {
         <div style={{marginTop:"auto",padding:"14px 16px",borderTop:`1px solid ${D.bdr}`}}>
           {timeStr&&(
             <div style={{fontSize:9,fontFamily:F.m,color:D.t2,marginBottom:10,
-              display:"flex",alignItems:"center",gap:5}}>
-              <i className="ti ti-circle-check" style={{fontSize:11,color:D.ok}}/>
+              display:"flex",alignItems:"center",gap:6}}>
+              <span className="zf-live" style={{width:6,height:6,borderRadius:"50%",
+                background:D.ok,flexShrink:0}}/>
               Atualizado às {timeStr}
             </div>
           )}
-          <button onClick={reload}
+          <button onClick={reload} disabled={loading} className="zf-focus"
             style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,
               fontSize:10,fontFamily:F.m,fontWeight:600,
               color:loading?D.t2:D.t1,background:"transparent",
-              border:`1px solid ${D.bdr}`,borderRadius:9,
-              padding:"8px 0",cursor:"pointer",width:"100%",transition:"all .15s"}}
-            onMouseEnter={e=>{e.currentTarget.style.background=gl("#888",0.08);}}
+              border:`1px solid ${D.bdr}`,borderRadius:10,
+              padding:"9px 0",cursor:loading?"default":"pointer",width:"100%",transition:"all .15s"}}
+            onMouseEnter={e=>{if(!loading)e.currentTarget.style.background=gl(theme.c0,0.07);}}
             onMouseLeave={e=>{e.currentTarget.style.background="transparent";}}>
             <i className={`ti ti-refresh${loading?" spinning":""}`} style={{fontSize:13}}/>
             {loading?"Sincronizando…":"Sincronizar"}
@@ -738,59 +921,72 @@ function EcosystemPage({ ecoKey }) {
         </div>
       </nav>
 
-      <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",
-        background:D.bg,overflowX:"hidden",height:"calc(100vh - 58px)",overflowY:"auto"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-          padding:mob?"10px 14px":"12px 28px",
-          background:D.bg1,borderBottom:`1px solid ${D.bdr}`,
-          position:"sticky",top:0,zIndex:40,flexShrink:0,
-          boxShadow:`0 1px 0 ${D.bdr}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            {mob&&(
-              <button onClick={()=>setSideOpen(v=>!v)}
+      <div ref={scrollRef} style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",
+        background:D.bg,overflowX:"hidden",height:"calc(100vh - 58px)",overflowY:"auto",
+        position:"relative"}}>
+
+        {/* Assinatura: glow ambiente na cor do ecossistema/campanha ativa */}
+        <div aria-hidden="true" style={{
+          position:"absolute", top:-180, left:"50%", transform:"translateX(-50%)",
+          width:"min(900px, 120%)", height:480, pointerEvents:"none", zIndex:0,
+          background:`radial-gradient(ellipse at center, ${gl(selColor, mode==="dark"?0.07:0.045)} 0%, transparent 65%)`,
+          transition:"background .5s ease",
+        }}/>
+
+        {mob&&(
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+            padding:"10px 14px",
+            background:mode==="dark"?gl("#0E0E0E",0.85):gl("#FFFFFF",0.85),
+            backdropFilter:"blur(10px)", WebkitBackdropFilter:"blur(10px)",
+            borderBottom:`1px solid ${D.bdr}`,
+            position:"sticky",top:0,zIndex:40,flexShrink:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <button onClick={()=>setSideOpen(v=>!v)} aria-label="Abrir menu" className="zf-focus"
                 style={{width:32,height:32,borderRadius:9,background:gl(selColor,0.1),
                   border:`1px solid ${gl(selColor,0.2)}`,display:"flex",alignItems:"center",
                   justifyContent:"center",color:selColor,cursor:"pointer",fontSize:15}}>
                 <i className="ti ti-menu-2"/>
               </button>
-            )}
-            <div style={{display:"flex",alignItems:"center",gap:7,fontSize:12}}>
-              {!mob&&<><span style={{color:D.t2}}>{theme.name}</span><span style={{color:D.t2,fontSize:10}}>/</span></>}
-              <span style={{display:"flex",alignItems:"center",gap:5}}>
-                <span style={{width:6,height:6,borderRadius:"50%",background:selColor}}/>
-                <span style={{color:D.t0,fontWeight:600}}>{sel==="overview"?"Dashboard":sel}</span>
+              <span style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}>
+                <span style={{width:7,height:7,borderRadius:"50%",background:selColor,
+                  boxShadow:`0 0 5px ${gl(selColor,0.35)}`,transition:"background .3s"}}/>
+                <span style={{color:D.t0,fontWeight:600,fontFamily:F.h,letterSpacing:"-0.01em"}}>
+                  {sel==="overview"?"Dashboard":sel}</span>
               </span>
             </div>
+            {loading&&<span style={{fontSize:9,fontFamily:F.m,color:D.t2}}>Carregando…</span>}
           </div>
-          {loading&&<span style={{fontSize:9,fontFamily:F.m,color:D.t2}}>Carregando…</span>}
-        </div>
+        )}
 
-        <div style={{padding:mob?"14px":"24px 28px",paddingTop:"24px",flex:1}}>
+        <div style={{padding:mob?"16px 14px":"26px 28px",flex:1,position:"relative",zIndex:1}}>
           {error&&(
-            <div style={{display:"flex",gap:12,padding:"14px 18px",marginBottom:18,
+            <div style={{display:"flex",gap:12,alignItems:"flex-start",padding:"15px 18px",marginBottom:18,
               background:gl(D.err,0.08),border:`1px solid ${gl(D.err,0.22)}`,
-              borderRadius:12,fontSize:11,color:D.err}}>
-              <i className="ti ti-alert-circle" style={{fontSize:15,marginTop:1,flexShrink:0}}/>
-              <div>Não foi possível carregar o Google Sheets.<br/>
-                <span style={{fontFamily:F.m,fontSize:9,opacity:0.6}}>{error}</span></div>
-            </div>
-          )}
-          {loading&&!error&&(
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",
-              justifyContent:"center",padding:"80px",gap:14,textAlign:"center"}}>
-              <div style={{width:52,height:52,borderRadius:14,background:gl(theme.c0,0.1),
-                display:"flex",alignItems:"center",justifyContent:"center",color:theme.c0,fontSize:24}}>
-                <i className="ti ti-refresh spinning"/>
+              borderRadius:14,fontSize:11.5,color:D.err}}>
+              <i className="ti ti-alert-circle" style={{fontSize:16,marginTop:1,flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600}}>Não foi possível carregar os dados do Google Sheets.</div>
+                <div style={{fontFamily:F.m,fontSize:9,opacity:0.65,marginTop:3}}>{error}</div>
               </div>
-              <div style={{fontSize:13,color:D.t1}}>Buscando dados…</div>
+              <button onClick={reload} className="zf-focus"
+                style={{flexShrink:0,fontSize:10,fontFamily:F.m,fontWeight:600,color:D.err,
+                  background:gl(D.err,0.1),border:`1px solid ${gl(D.err,0.3)}`,
+                  borderRadius:9,padding:"7px 14px",cursor:"pointer",transition:"background .15s"}}
+                onMouseEnter={e=>{e.currentTarget.style.background=gl(D.err,0.18);}}
+                onMouseLeave={e=>{e.currentTarget.style.background=gl(D.err,0.1);}}>
+                Tentar novamente
+              </button>
             </div>
           )}
+          {loading&&!error&&<LoadingSkeleton mob={mob}/>}
           {!loading&&!error&&rows&&(
-            sel==="overview"||!CAMPANHAS[ecoKey][sel]
-              ?<Overview ecoKey={ecoKey} M={M} theme={theme} onSelect={setSel}/>
-              :<FunnelDetail campKey={sel} info={CAMPANHAS[ecoKey][sel]} M={M}
-                  color={colors[camps.findIndex(([k])=>k===sel)%colors.length]??theme.c0}
-                  onBack={()=>setSel("overview")}/>
+            <div key={sel} className="zf-page">
+              {sel==="overview"||!CAMPANHAS[ecoKey][sel]
+                ?<Overview ecoKey={ecoKey} M={M} theme={theme} onSelect={setSel} timeStr={timeStr}/>
+                :<FunnelDetail campKey={sel} info={CAMPANHAS[ecoKey][sel]} M={M}
+                    color={colors[camps.findIndex(([k])=>k===sel)%colors.length]??theme.c0}
+                    onBack={()=>setSel("overview")}/>}
+            </div>
           )}
         </div>
       </div>
@@ -805,13 +1001,77 @@ const TABS = [
   { label:"We Love Peru",   ecoKey:"peru"  },
 ];
 
+// ─── CLIENT SWITCHER (topbar) ────────────────────────────────────────────────
+// Segmented control: o thumb desliza entre os clientes e assume a cor de cada um.
+function ClientSwitcher({ tab, setTab, mob }) {
+  const D = useD();
+  const mode = useTheme();
+  const n = TABS.length;
+  const activeTheme = Object.values(THEMES)[tab];
+
+  const onKey = (e) => {
+    if (e.key === "ArrowRight") { e.preventDefault(); setTab((tab+1)%n); }
+    if (e.key === "ArrowLeft")  { e.preventDefault(); setTab((tab+n-1)%n); }
+  };
+
+  return (
+    <div role="tablist" aria-label="Selecionar cliente" onKeyDown={onKey}
+      style={{display:"grid", gridTemplateColumns:`repeat(${n},1fr)`,
+        position:"relative", padding:3, borderRadius:12,
+        background: mode==="dark" ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.05)",
+        border:`1px solid ${D.bdr}`}}>
+
+      {/* Thumb deslizante — muda de posição e de cor junto */}
+      <div aria-hidden="true" style={{
+        position:"absolute", top:3, bottom:3,
+        width:`calc((100% - 6px) / ${n})`,
+        left:`calc(3px + ${tab} * ((100% - 6px) / ${n}))`,
+        borderRadius:9,
+        background:gl(activeTheme.c0, mode==="dark"?0.11:0.09),
+        border:`1px solid ${gl(activeTheme.c0,0.28)}`,
+        boxShadow:`0 0 10px ${gl(activeTheme.c0,0.12)}, inset 0 1px 0 ${gl(activeTheme.c0,0.1)}`,
+        transition:"left .32s cubic-bezier(.22,.68,.4,1), background .32s, border-color .32s, box-shadow .32s",
+      }}/>
+
+      {TABS.map((t,i)=>{
+        const active = i===tab;
+        const th = Object.values(THEMES)[i];
+        return (
+          <button key={i} role="tab" aria-selected={active}
+            tabIndex={active?0:-1}
+            onClick={()=>setTab(i)}
+            className="zf-focus"
+            title={t.label}
+            style={{position:"relative", zIndex:1,
+              display:"flex", alignItems:"center", justifyContent:"center", gap:7,
+              fontFamily:F.b, fontSize:mob?10:11.5, fontWeight:active?600:450,
+              color:active?D.t0:D.t1,
+              background:"transparent", border:"none", borderRadius:9,
+              padding:mob?"6px 8px":"6px 14px",
+              cursor:"pointer", transition:"color .2s", whiteSpace:"nowrap"}}
+            onMouseEnter={e=>{if(!active)e.currentTarget.style.color=D.t0;}}
+            onMouseLeave={e=>{if(!active)e.currentTarget.style.color=D.t1;}}>
+            <span style={{width:mob?18:17, height:mob?18:17, borderRadius:5, flexShrink:0,
+              background:`linear-gradient(135deg,${th.c0},${th.c3})`,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:9, fontWeight:700, color:"#fff", fontFamily:F.h,
+              opacity:active?1:0.55, transition:"opacity .2s, box-shadow .2s",
+              boxShadow:active?`0 0 6px ${gl(th.c0,0.28)}`:"none"}}>{th.avatar}</span>
+            {!mob && t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── ROOT ────────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState(0);
-  const [hov, setHov] = useState(null);
   const [mode, setMode] = useState(() => localStorage.getItem("zafra-theme") || "dark");
   const mob = useIsMobile();
   const D = PALETTES[mode];
+  const activeTheme = Object.values(THEMES)[tab];
 
   useEffect(() => { localStorage.setItem("zafra-theme", mode); }, [mode]);
 
@@ -821,17 +1081,74 @@ export default function App() {
         background:D.bg,fontFamily:F.b,color:D.t0,overflowX:"hidden",
         transition:"background .3s, color .3s"}}>
         <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=DM+Mono:wght@400;500;600&display=swap');
+          @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;450;500;600;700&family=DM+Mono:wght@400;500&display=swap');
           @import url('https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css');
           *{box-sizing:border-box;}
           html,body,#root{margin:0;padding:0;width:100%;min-height:100%;overflow-x:hidden;}
           body{background:${D.bg};transition:background .3s;}
-          ::-webkit-scrollbar{width:4px;height:4px;}
+          ::selection{background:${gl(activeTheme.c0,0.3)};}
+          ::-webkit-scrollbar{width:5px;height:5px;}
           ::-webkit-scrollbar-track{background:transparent;}
-          ::-webkit-scrollbar-thumb{background:${mode==="dark"?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.15)"};border-radius:2px;}
+          ::-webkit-scrollbar-thumb{background:${mode==="dark"?"rgba(255,255,255,0.1)":"rgba(0,0,0,0.15)"};border-radius:3px;}
+          ::-webkit-scrollbar-thumb:hover{background:${mode==="dark"?"rgba(255,255,255,0.18)":"rgba(0,0,0,0.25)"};}
+
           @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
           .spinning{animation:spin 1s linear infinite;display:inline-block;}
+
+          /* Cards: lift + glow no hover */
+          .zf-card{transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;}
+          .zf-card:hover{transform:translateY(-2px);
+            box-shadow:0 6px 20px var(--glow), 0 1px 4px ${D.shadow};
+            border-color:var(--bdr-hover) !important;}
+
+          /* Entrada em cascata das seções */
+          @keyframes zfIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+          .zf-in{animation:zfIn .45s cubic-bezier(.22,.68,.4,1) backwards;}
+
+          /* Linhas de tabela entram em cascata (delay inline por linha) */
+          @keyframes zfRow{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+          .zf-row{animation:zfRow .38s cubic-bezier(.22,.68,.4,1) backwards;}
+
+          /* Transição ao navegar entre Dashboard e detalhe de campanha */
+          @keyframes zfPage{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+          .zf-page{animation:zfPage .32s ease-out backwards;}
+
+          /* Pulso "ao vivo" — dados auto-atualizam a cada 5 min */
+          @keyframes zfPing{0%{transform:scale(1);opacity:.45}70%,100%{transform:scale(2.3);opacity:0}}
+          .zf-live{position:relative;}
+          .zf-live::after{content:"";position:absolute;inset:0;border-radius:50%;
+            background:inherit;animation:zfPing 2.4s cubic-bezier(0,0,.2,1) infinite;}
+
+          /* Skeleton shimmer */
+          @keyframes zfShimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+          .zf-shimmer{
+            background:linear-gradient(90deg,
+              ${mode==="dark"?"rgba(255,255,255,0.05)":"rgba(0,0,0,0.05)"} 25%,
+              ${mode==="dark"?"rgba(255,255,255,0.1)":"rgba(0,0,0,0.09)"} 50%,
+              ${mode==="dark"?"rgba(255,255,255,0.05)":"rgba(0,0,0,0.05)"} 75%);
+            background-size:200% 100%;
+            animation:zfShimmer 1.4s linear infinite;
+          }
+
+          /* Foco de teclado visível em tudo que é interativo */
+          .zf-focus{outline:none;}
+          .zf-focus:focus-visible{outline:2px solid ${gl(activeTheme.c0,0.7)};outline-offset:2px;}
+
+          /* Acessibilidade: respeita preferência por menos movimento */
+          @media (prefers-reduced-motion: reduce){
+            .zf-in,.zf-row,.zf-page{animation:none;}
+            .zf-live::after{animation:none;display:none;}
+            .zf-card, .zf-card:hover{transform:none;transition:none;}
+            .zf-shimmer{animation:none;}
+            *{transition-duration:.01ms !important;animation-duration:.01ms !important;}
+          }
         `}</style>
+
+        {/* Grain sutil sobre toda a UI — tira o aspecto "flat" de tela gerada */}
+        <div aria-hidden="true" style={{position:"fixed", inset:0, zIndex:999,
+          pointerEvents:"none", mixBlendMode:"soft-light",
+          opacity:mode==="dark"?0.08:0.05,
+          backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`}}/>
 
         {/* Global topbar */}
         <div style={{display:"flex",alignItems:"center",
@@ -842,32 +1159,17 @@ export default function App() {
           transition:"background .3s, border-color .3s"}}>
 
           <div style={{display:"flex",alignItems:"center",marginRight:mob?12:24,flexShrink:0}}>
-            <img src={mode==="dark"?zafraLogo:zafraLogo} alt="Zafra"
+            <img src={zafraLogo} alt="Zafra"
               style={{height:mob?34:46,width:"auto",objectFit:"contain",
+                transition:"filter .4s",
                 filter:mode==="dark"
-                  ?"drop-shadow(0 0 10px rgba(232,82,122,0.3))"
-                  :"drop-shadow(0 0 6px rgba(200,60,100,0.2)) brightness(0)"}}/>
+                  ?`drop-shadow(0 0 7px ${gl(activeTheme.c0,0.18)})`
+                  :`drop-shadow(0 0 5px ${gl(activeTheme.c0,0.12)}) brightness(0)`}}/>
           </div>
 
           <div style={{width:1,height:18,background:D.bdr,marginRight:mob?12:20}}/>
 
-          {TABS.map((t,i)=>{
-            const active=i===tab;
-            const theme=Object.values(THEMES)[i];
-            return (
-              <button key={i} onClick={()=>setTab(i)}
-                onMouseEnter={()=>setHov(i)} onMouseLeave={()=>setHov(null)}
-                style={{fontFamily:F.b,fontSize:mob?10:12,fontWeight:active?700:400,
-                  color:active?D.t0:hov===i?D.t0:D.t1,
-                  background:"transparent",border:"none",
-                  borderBottom:`2px solid ${active?theme.c0:"transparent"}`,
-                  padding:mob?"0 10px":"0 16px",height:"100%",
-                  cursor:"pointer",transition:"color .15s,border-color .15s",
-                  marginBottom:-1,whiteSpace:"nowrap"}}>
-                {mob?t.label.split(" ")[0]:t.label}
-              </button>
-            );
-          })}
+          <ClientSwitcher tab={tab} setTab={setTab} mob={mob}/>
 
           <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:12}}>
             <ThemeToggle mode={mode} onChange={setMode}/>
