@@ -1,85 +1,148 @@
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from "react";
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  motion,
+  AnimatePresence,
+  MotionConfig,
+  LayoutGroup,
+  animate,
+  useMotionValue,
+  useMotionTemplate,
+  useSpring,
+  useTransform,
+  useReducedMotion,
+} from "motion/react";
+import {
+  BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
 import zafraLogo from "./zafra_logo_branca.png";
 import manychatLogo from "./manychat_logo_branca.png";
 
-// ─── THEME CONTEXT ────────────────────────────────────────────────────────────
-const ThemeCtx = createContext("dark");
-const useTheme = () => useContext(ThemeCtx);
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. TOKENS
+   ═════════════════════════════════════════════════════════════════════════ */
 
-// ─── RESPONSIVE ──────────────────────────────────────────────────────────────
-function useIsMobile() {
-  const [mob, setMob] = useState(window.innerWidth < 768);
-  useEffect(() => {
-    const fn = () => setMob(window.innerWidth < 768);
-    window.addEventListener("resize", fn);
-    return () => window.removeEventListener("resize", fn);
-  }, []);
-  return mob;
-}
+// Escala de espaçamento (múltiplos de 4)
+const SP = { "1":4, "2":8, "3":12, "4":16, "5":20, "6":24, "7":32, "8":40 };
 
-// ─── PALETTES ────────────────────────────────────────────────────────────────
-const PALETTES = {
-  dark: {
-    bg:   "#080808",
-    bg1:  "#0E0E0E",
-    bg2:  "#0D0D0D",
-    bg3:  "#161616",
-    bdr:  "rgba(255,255,255,0.07)",
-    bdr2: "rgba(255,255,255,0.12)",
-    t0:   "#F0EEF6",
-    t1:   "#8A8799",
-    t2:   "#3F3D52",
-    ok:   "#2EC98A",
-    warn: "#D9922A",
-    err:  "#E04444",
-    shadow: "rgba(0,0,0,0.4)",
-  },
-  light: {
-    bg:   "#F4F3F7",
-    bg1:  "#FFFFFF",
-    bg2:  "#FFFFFF",
-    bg3:  "#F0EFF5",
-    bdr:  "rgba(0,0,0,0.08)",
-    bdr2: "rgba(0,0,0,0.14)",
-    t0:   "#111018",
-    t1:   "#5A5870",
-    t2:   "#9896AA",
-    ok:   "#1A9E6A",
-    warn: "#B87020",
-    err:  "#C03030",
-    shadow: "rgba(0,0,0,0.08)",
-  },
-};
+// Raios
+const R = { xs:6, sm:8, md:10, lg:14, xl:18, pill:999 };
 
-function useD() {
-  const theme = useTheme();
-  return PALETTES[theme];
-}
-
-// Space Grotesk = display/números · Inter = corpo · DM Mono = dados/labels
+// Tipografia — Space Grotesk (display/números) · Instrument Sans (corpo) · DM Mono (dados)
 const F = {
-  h: "'Space Grotesk', system-ui, sans-serif",
-  b: "'Inter', system-ui, sans-serif",
+  h: "'Space Grotesk', 'Helvetica Neue', sans-serif",
+  b: "'Instrument Sans', 'Helvetica Neue', system-ui, sans-serif",
   m: "'DM Mono', 'Fira Mono', monospace",
 };
 
-const gl = (hex, op) => {
-  const h = hex.replace("#","");
-  return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${op})`;
+// Escala tipográfica
+const T = {
+  display: { fontFamily:F.h, fontSize:30, fontWeight:700, letterSpacing:"-0.028em", lineHeight:1.12 },
+  h1:      { fontFamily:F.h, fontSize:20, fontWeight:700, letterSpacing:"-0.022em", lineHeight:1.25 },
+  h2:      { fontFamily:F.h, fontSize:13.5, fontWeight:600, letterSpacing:"-0.012em", lineHeight:1.35 },
+  metric:  { fontFamily:F.h, fontWeight:700, letterSpacing:"-0.035em", lineHeight:1, fontVariantNumeric:"tabular-nums" },
+  body:    { fontFamily:F.b, fontSize:12.5, fontWeight:400, lineHeight:1.55, letterSpacing:"-0.005em" },
+  small:   { fontFamily:F.b, fontSize:11.5, fontWeight:400, lineHeight:1.5, letterSpacing:"-0.003em" },
+  eyebrow: { fontFamily:F.m, fontSize:9, fontWeight:500, letterSpacing:"0.13em", textTransform:"uppercase", lineHeight:1.2 },
+  mono:    { fontFamily:F.m, fontSize:11, fontWeight:500, fontVariantNumeric:"tabular-nums" },
 };
 
-// ─── ECOSYSTEM THEMES ────────────────────────────────────────────────────────
+/* ── Tokens de movimento ──────────────────────────────────────────────────
+   Curvas e molas nomeadas. Tudo que se move no painel sai daqui — do mesmo
+   jeito que toda cor sai da paleta. */
+const EASE = [0.22, 0.68, 0.4, 1];
+
+const MOVE = {
+  // Elementos que trocam de lugar (pílula do cliente, marcador da sidebar)
+  swap:  { type:"spring", stiffness:400, damping:34, mass:0.8 },
+  // Reação ao ponteiro: precisa ser quase instantânea
+  hover: { duration:0.18, ease:EASE },
+  // Entrada de blocos de conteúdo
+  enter: { duration:0.45, ease:EASE },
+  // Troca de página
+  page:  { duration:0.24, ease:EASE },
+};
+
+// Container que escalona a entrada dos filhos
+const stagger = {
+  hidden: {},
+  show:   { transition:{ staggerChildren:0.055, delayChildren:0.04 } },
+};
+
+// Bloco de conteúdo. Ao entrar, escalona os próprios filhos (linhas de lista).
+const rise = {
+  hidden: { opacity:0, y:10 },
+  show:   { opacity:1, y:0, transition:{ ...MOVE.enter, staggerChildren:0.045, delayChildren:0.08 } },
+};
+
+// Linha de lista: entra pela esquerda, como se o conteúdo escorresse para dentro
+const slide = {
+  hidden: { opacity:0, x:-8 },
+  show:   { opacity:1, x:0, transition:{ duration:0.36, ease:EASE } },
+};
+
+const PALETTES = {
+  dark: {
+    bg:      "#09090B",
+    surface: "#111114",
+    surfaceAlt: "#17171B",
+    elev:    "#1D1D22",
+    bdr:     "rgba(255,255,255,0.065)",
+    bdr2:    "rgba(255,255,255,0.115)",
+    t0:      "#EDECF2",
+    t1:      "#9A98A6",
+    t2:      "#65636F",
+    ok:      "#35C98D",
+    warn:    "#D9922A",
+    err:     "#E0524E",
+    track:   "rgba(255,255,255,0.06)",
+    sh1:     "0 1px 2px rgba(0,0,0,0.4)",
+    sh2:     "0 4px 16px rgba(0,0,0,0.45)",
+    sh3:     "0 12px 40px rgba(0,0,0,0.55)",
+  },
+  light: {
+    bg:      "#F5F5F7",
+    surface: "#FFFFFF",
+    surfaceAlt: "#FAFAFC",
+    elev:    "#FFFFFF",
+    bdr:     "rgba(17,17,26,0.075)",
+    bdr2:    "rgba(17,17,26,0.14)",
+    t0:      "#131319",
+    t1:      "#57555F",
+    t2:      "#8B8994",
+    ok:      "#12996A",
+    warn:    "#AF6C1C",
+    err:     "#C0403C",
+    track:   "rgba(17,17,26,0.06)",
+    sh1:     "0 1px 2px rgba(17,17,26,0.05)",
+    sh2:     "0 4px 16px rgba(17,17,26,0.07)",
+    sh3:     "0 12px 40px rgba(17,17,26,0.10)",
+  },
+};
+
+const ThemeCtx = createContext("dark");
+const useTheme = () => useContext(ThemeCtx);
+const useD = () => PALETTES[useTheme()];
+
+// hex -> rgba
+const gl = (hex, op) => {
+  const h = String(hex).replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${op})`;
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. CONFIGURAÇÃO — ecossistemas, campanhas e integração (INALTERADO)
+   ═════════════════════════════════════════════════════════════════════════ */
+
 const THEMES = {
   laise: { name:"Laise Mesquita", avatar:"L", c0:"#E8527A", c1:"#C43D63", c2:"#9E2E4E", c3:"#72203A" },
   chile: { name:"We Love Chile",  avatar:"C", c0:"#CC1A1A", c1:"#A51515", c2:"#7D1010", c3:"#550B0B" },
   peru:  { name:"We Love Peru",   avatar:"P", c0:"#1A7A3A", c1:"#156130", c2:"#0F4A24", c3:"#093318" },
 };
 
-// ─── CAMPAIGNS ───────────────────────────────────────────────────────────────
 const CAMPANHAS = {
   laise: {
     "Acesso Comercial":   { icon:"ti-briefcase", cols:["Comercial (Iniciou)","Comercial (clicou em quero saber mais)","Comercial (Clicou Wpp)"], etapas:["Iniciou","Quero saber mais","Clicou no Wpp"], kpi_sub_col:"Comercial (Clicou Wpp)", kpi_sub_label:"→ Wpp" },
@@ -105,729 +168,1588 @@ const URLS = {
   peru:  `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=1780246388`,
 };
 
-// ─── UTILS ───────────────────────────────────────────────────────────────────
-const pct     = (t,p) => (!t?null:Math.round((p/t)*1000)/10);
-const fmtPct  = (t,p) => { const v=pct(t,p); return v!==null?`${v.toFixed(1)}%`:"—"; };
-const safePct = (t,p) => pct(t,p)??0;
-const fmtNum  = (n) => (n??0).toLocaleString("pt-BR");
+const TABS = [
+  { label:"Laise Mesquita", short:"Laise", ecoKey:"laise" },
+  { label:"We Love Chile",  short:"Chile", ecoKey:"chile" },
+  { label:"We Love Peru",   short:"Peru",  ecoKey:"peru"  },
+];
+
+const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+
+// Altura da topbar — usada também pela sidebar sticky, pela área rolável e pelo fundo
+const TOPBAR_H = 68;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3. DADOS — parsing, métricas e diagnóstico (lógica preservada)
+   ═════════════════════════════════════════════════════════════════════════ */
+
+const clamp = (n, min, max) => Math.min(Math.max(n, min), max);
+const fmtNum = (n) => (Number.isFinite(n) ? n : 0).toLocaleString("pt-BR");
+
+// Percentual seguro: nunca NaN, Infinity ou negativo
+function pct(total, part) {
+  if (!total || !Number.isFinite(total) || total <= 0) return null;
+  const v = (Math.max(part ?? 0, 0) / total) * 100;
+  return Number.isFinite(v) ? clamp(Math.round(v * 10) / 10, 0, 100) : null;
+}
+const safePct = (total, part) => pct(total, part) ?? 0;
+const fmtPct  = (total, part) => { const v = pct(total, part); return v !== null ? `${v.toFixed(1)}%` : "—"; };
+const fmtRate = (v) => (Number.isFinite(v) ? `${clamp(v, 0, 100).toFixed(1)}%` : "—");
 
 function parseBool(raw) {
-  const s = String(raw??"").trim().toUpperCase();
-  if (s==="TRUE"||s==="1") return true;
-  if (s==="FALSE"||s==="0"||s===""||s==="NAN") return false;
+  const s = String(raw ?? "").trim().toUpperCase();
+  if (s === "TRUE" || s === "1") return true;
+  if (s === "FALSE" || s === "0" || s === "" || s === "NAN") return false;
   return null;
 }
+
 function parseCSV(text) {
-  const lines = text.trim().replace(/\r\n|\r/g,"\n").split("\n");
-  const headers = lines[0].split(",").map(h=>h.trim().replace(/^"|"$/g,""));
-  const rows = lines.slice(1).filter(l=>l.trim()).map(line=>{
-    const vals=[]; let cur="",inQ=false;
-    for(let i=0;i<line.length;i++){
-      const ch=line[i];
-      if(ch==='"'){inQ=!inQ;}
-      else if(ch===","&&!inQ){vals.push(cur.trim());cur="";}
-      else{cur+=ch;}
+  const lines = text.trim().replace(/\r\n|\r/g, "\n").split("\n");
+  const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+  const rows = lines.slice(1).filter(l => l.trim()).map(line => {
+    const vals = []; let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === "," && !inQ) { vals.push(cur.trim()); cur = ""; }
+      else { cur += ch; }
     }
     vals.push(cur.trim());
-    const obj={};
-    headers.forEach((h,i)=>{
-      const raw=(vals[i]??"").replace(/^"|"$/g,"").trim();
-      const b=parseBool(raw);
-      obj[h]=b!==null?b:raw;
+    const obj = {};
+    headers.forEach((h, i) => {
+      const raw = (vals[i] ?? "").replace(/^"|"$/g, "").trim();
+      const b = parseBool(raw);
+      obj[h] = b !== null ? b : raw;
     });
     return obj;
   });
-  const boolCols=headers.filter(h=>h&&rows.length>0&&rows.every(r=>r[h]===true||r[h]===false));
-  return {rows,boolCols};
+  const boolCols = headers.filter(h => h && rows.length > 0 && rows.every(r => r[h] === true || r[h] === false));
+  return { rows, boolCols };
 }
-function buildMetrics(rows,boolCols){
-  const M={};
-  boolCols.forEach(col=>{M[col]=rows.filter(r=>r[col]===true).length;});
+
+function buildMetrics(rows, boolCols) {
+  const M = {};
+  boolCols.forEach(col => { M[col] = rows.filter(r => r[col] === true).length; });
   return M;
 }
-function useData(url){
-  const [st,setSt]=useState({rows:null,boolCols:null,error:null,loading:true,lastSync:null});
-  const load=useCallback(async()=>{
-    setSt(s=>({...s,loading:true,error:null}));
-    try{
-      const res=await fetch(url);
-      if(!res.ok) throw new Error(`HTTP ${res.status}`);
-      const {rows,boolCols}=parseCSV(await res.text());
-      setSt({rows,boolCols,error:null,loading:false,lastSync:new Date()});
-    }catch(e){setSt(s=>({...s,error:e.message,loading:false}));}
-  },[url]);
-  useEffect(()=>{load();const id=setInterval(load,5*60*1000);return()=>clearInterval(id);},[load]);
-  return {...st,reload:load};
+
+function useData(url) {
+  const [st, setSt] = useState({ rows:null, boolCols:null, error:null, loading:true, lastSync:null });
+  const load = useCallback(async () => {
+    setSt(s => ({ ...s, loading:true, error:null }));
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { rows, boolCols } = parseCSV(await res.text());
+      setSt({ rows, boolCols, error:null, loading:false, lastSync:new Date() });
+    } catch (e) {
+      setSt(s => ({ ...s, error:e.message, loading:false }));
+    }
+  }, [url]);
+  useEffect(() => {
+    load();
+    const id = setInterval(load, SYNC_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [load]);
+  return { ...st, reload: load };
 }
 
-// ─── MOTION HELPERS ──────────────────────────────────────────────────────────
-const prefersReduced = () =>
+// Maior queda entre duas etapas consecutivas de um funil
+function getBiggestDrop(info, metrics) {
+  const values = info.cols.map((col) => metrics[col] ?? 0);
+
+  let biggestDrop = null;
+
+  for (let index = 1; index < values.length; index++) {
+    const previous = values[index - 1];
+    const current = values[index];
+
+    if (!previous) continue;
+
+    const lost = Math.max(previous - current, 0);
+    const lossRate = (lost / previous) * 100;
+
+    if (!biggestDrop || lossRate > biggestDrop.lossRate) {
+      biggestDrop = {
+        from: info.etapas[index - 1],
+        to: info.etapas[index],
+        previous,
+        current,
+        lost,
+        lossRate,
+      };
+    }
+  }
+
+  return biggestDrop;
+}
+
+// Etapas do funil com % do topo, % da etapa anterior e perda absoluta
+function getStages(info, metrics) {
+  const values = info.cols.map((col) => metrics[col] ?? 0);
+  const top = values[0] ?? 0;
+  return info.etapas.map((name, i) => {
+    const value = values[i] ?? 0;
+    const previous = i > 0 ? (values[i - 1] ?? 0) : null;
+    return {
+      name,
+      value,
+      previous,
+      lost: previous !== null ? Math.max(previous - value, 0) : 0,
+      pctTop: pct(top, value),
+      pctPrev: previous !== null ? pct(previous, value) : null,
+    };
+  });
+}
+
+// Classificação não-alarmista da maior queda
+function classifyDrop(lossRate, D) {
+  if (!Number.isFinite(lossRate)) return { label:"Sem volume", color:D.t2 };
+  if (lossRate <= 30) return { label:"Desempenho consistente", color:D.ok };
+  if (lossRate <= 60) return { label:"Atenção recomendada", color:D.warn };
+  return { label:"Gargalo relevante", color:D.err };
+}
+
+// Cor semântica para taxas de conversão
+const rateColor = (rate, D, accent) =>
+  rate >= 70 ? D.ok : rate >= 40 ? accent : rate >= 20 ? D.warn : D.err;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. HOOKS DE UI
+   ═════════════════════════════════════════════════════════════════════════ */
+
+function useIsMobile() {
+  const [mob, setMob] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+  useEffect(() => {
+    const fn = () => setMob(window.innerWidth < 768);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
+  return mob;
+}
+
+// Leitura pontual, fora do ciclo de render — só para decidir se a abertura toca.
+// Dentro dos componentes usamos useReducedMotion(), que é reativo.
+const reducedMotionNow = () =>
   typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
-// Número que conta até o valor final (easeOutCubic). Respeita reduced-motion.
-function AnimatedNumber({ value, format = (n)=>fmtNum(Math.round(n)), duration = 850, delay = 0 }) {
-  const [v, setV] = useState(() => prefersReduced() ? value : 0);
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. PRIMITIVOS DE UI
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* Contagem animada. O número vive em um motion value: a interpolação acontece
+   fora do React, então a tela não re-renderiza a 60fps para contar até 4.812. */
+function AnimatedNumber({ value, format = (n) => fmtNum(Math.round(n)), duration = 900, delay = 0 }) {
+  const safe = Number.isFinite(value) ? value : 0;
+  const reduce = useReducedMotion();
+  const count = useMotionValue(reduce ? safe : 0);
+  const text = useTransform(count, format);
+
   useEffect(() => {
-    if (prefersReduced()) { setV(value); return; }
-    let raf, start;
-    const tick = (t) => {
-      if (start === undefined) start = t;
-      const p = Math.min((t - start - delay) / duration, 1);
-      if (p < 0) { raf = requestAnimationFrame(tick); return; }
-      setV(value * (1 - Math.pow(1 - p, 3)));
-      if (p < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [value, duration, delay]);
-  return <>{format(v)}</>;
+    if (reduce) { count.set(safe); return; }
+    const controls = animate(count, safe, {
+      duration: duration / 1000,
+      delay: delay / 1000,
+      ease: EASE,
+    });
+    return () => controls.stop();
+  }, [safe, duration, delay, reduce, count]);
+
+  return <motion.span>{text}</motion.span>;
 }
 
-// Barra de progresso que preenche a partir do zero, com stagger opcional
-function Bar({ value, fill, track, height = 4, radius = 2, delay = 0 }) {
-  const [w, setW] = useState(() => prefersReduced() ? value : 0);
-  useEffect(() => {
-    if (prefersReduced()) { setW(value); return; }
-    const id = setTimeout(() => setW(value), 60 + delay);
-    return () => clearTimeout(id);
-  }, [value, delay]);
+function Meter({ value, color, track, height = 5, delay = 0 }) {
+  const D = useD();
+  const reduce = useReducedMotion();
+  const target = clamp(Number.isFinite(value) ? value : 0, 0, 100);
   return (
-    <div style={{height, background:track, borderRadius:radius, overflow:"hidden"}}>
-      <div style={{height:"100%", borderRadius:radius, width:`${Math.min(w,100)}%`,
-        background:fill, transition:"width .8s cubic-bezier(.22,.68,.4,1)"}}/>
+    <div style={{ height, background: track ?? D.track, borderRadius: R.pill, overflow:"hidden" }}>
+      <motion.div
+        initial={{ width: reduce ? `${target}%` : 0 }}
+        animate={{ width: `${target}%` }}
+        transition={{ duration: reduce ? 0 : 0.85, delay: reduce ? 0 : delay / 1000, ease: EASE }}
+        style={{
+          height:"100%", borderRadius:R.pill,
+          background:`linear-gradient(90deg, ${gl(color, 0.55)}, ${color})`,
+        }}
+      />
     </div>
   );
 }
 
-// ─── THEME TOGGLE ─────────────────────────────────────────────────────────────
-function ThemeToggle({ mode, onChange }) {
-  const isDark = mode === "dark";
-  return (
-    <button
-      onClick={() => onChange(isDark ? "light" : "dark")}
-      title={isDark ? "Ativar modo claro" : "Ativar modo escuro"}
-      aria-label={isDark ? "Ativar modo claro" : "Ativar modo escuro"}
-      className="zf-focus"
-      style={{
-        width:46, height:25, borderRadius:13, padding:0,
-        border:`1px solid ${isDark?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.15)"}`,
-        background: isDark ? "#1E1E2E" : "#E4E2F0",
-        cursor:"pointer", transition:"background .25s, border-color .25s",
-        position:"relative", flexShrink:0,
-      }}
-    >
-      <i className="ti ti-sun" style={{
-        position:"absolute", left:6, top:"50%", transform:"translateY(-50%)",
-        fontSize:10, color: isDark ? "rgba(255,255,255,0.2)" : "#7C6CD0",
-        transition:"color .25s",
-      }}/>
-      <i className="ti ti-moon" style={{
-        position:"absolute", right:6, top:"50%", transform:"translateY(-50%)",
-        fontSize:10, color: isDark ? "#A78BFA" : "rgba(0,0,0,0.2)",
-        transition:"color .25s",
-      }}/>
-      <div style={{
-        position:"absolute", top:2,
-        left: isDark ? 23 : 2,
-        width:19, height:19, borderRadius:"50%",
-        background: isDark ? "#A78BFA" : "#7C6CD0",
-        transition:"left .25s cubic-bezier(.4,0,.2,1)",
-        boxShadow:"0 1px 4px rgba(0,0,0,0.3)",
-      }}/>
-    </button>
-  );
-}
-
-// ─── BASE COMPONENTS ─────────────────────────────────────────────────────────
-function Divider() {
+function Divider({ style }) {
   const D = useD();
-  return <div style={{height:1, background:D.bdr}}/>;
+  return <div aria-hidden="true" style={{ height:1, background:D.bdr, ...style }}/>;
 }
 
-function Tag({ children, color }) {
+function Eyebrow({ children, color, style }) {
+  const D = useD();
+  return <div style={{ ...T.eyebrow, color: color ?? D.t2, ...style }}>{children}</div>;
+}
+
+function Badge({ children, color, solid = false }) {
   return (
     <span style={{
-      fontSize:9, fontWeight:600, fontFamily:F.m, letterSpacing:"0.07em",
-      textTransform:"uppercase", padding:"3px 9px", borderRadius:20,
-      background:gl(color,0.13), color, border:`1px solid ${gl(color,0.28)}`,
+      display:"inline-flex", alignItems:"center", gap:5,
+      fontSize:9.5, fontWeight:600, fontFamily:F.m, letterSpacing:"0.06em",
+      textTransform:"uppercase", padding:"3px 9px", borderRadius:R.pill,
+      background: solid ? color : gl(color, 0.12),
+      color: solid ? "#fff" : color,
+      border:`1px solid ${gl(color, solid ? 0.9 : 0.26)}`,
       whiteSpace:"nowrap",
     }}>{children}</span>
   );
 }
 
-// Chip de metadado (usado no hero do overview)
-function MetaChip({ icon, color, children }) {
+function Chip({ icon, color, children, live = false }) {
   const D = useD();
   return (
-    <span style={{display:"inline-flex", alignItems:"center", gap:6,
-      background:D.bg2, border:`1px solid ${D.bdr}`, borderRadius:20,
-      padding:"5px 12px", fontSize:10, color:D.t1, fontFamily:F.m,
-      whiteSpace:"nowrap"}}>
-      <i className={`ti ${icon}`} style={{fontSize:11, color}}/>
+    <span style={{
+      display:"inline-flex", alignItems:"center", gap:6,
+      background:D.surface, border:`1px solid ${D.bdr}`, borderRadius:R.pill,
+      padding:"5px 11px", fontSize:10.5, color:D.t1, fontFamily:F.m,
+      whiteSpace:"nowrap", boxShadow:D.sh1,
+    }}>
+      {live
+        ? <span className="zf-live" style={{ width:6, height:6, borderRadius:"50%", background:color, flexShrink:0 }}/>
+        : <i className={`ti ${icon}`} style={{ fontSize:12, color }}/>}
       {children}
     </span>
   );
 }
 
-function IconBox({ icon, color, size=36 }) {
+function IconBox({ icon, color, size = 34 }) {
   return (
-    <div style={{
-      width:size, height:size, borderRadius:size*0.3, flexShrink:0,
-      background:`linear-gradient(145deg, ${gl(color,0.18)}, ${gl(color,0.06)})`,
-      border:`1px solid ${gl(color,0.22)}`,
-      boxShadow:`inset 0 1px 0 ${gl(color,0.15)}`,
-      display:"flex", alignItems:"center", justifyContent:"center",
-      color, fontSize:size*0.45,
+    <span aria-hidden="true" style={{
+      width:size, height:size, borderRadius:size * 0.32, flexShrink:0,
+      background:`linear-gradient(150deg, ${gl(color, 0.16)}, ${gl(color, 0.05)})`,
+      border:`1px solid ${gl(color, 0.2)}`,
+      boxShadow:`inset 0 1px 0 ${gl(color, 0.14)}`,
+      display:"inline-flex", alignItems:"center", justifyContent:"center",
+      color, fontSize:size * 0.44,
     }}>
       <i className={`ti ${icon}`}/>
-    </div>
+    </span>
   );
 }
 
-// Painel base: vidro elevado + hover lift + glow na cor do tema
-function Panel({ color, children, style, className="", hoverable=true }) {
+/* Cartão. O hover deixou de ser CSS: agora é whileHover, e a borda longa
+   (borderColor) é animável — por isso o border vem em longhand. */
+function Surface({ color, children, style, hoverable = true, className = "", ...rest }) {
   const D = useD();
+  const hover = hoverable
+    ? {
+        y: -1,
+        borderColor: color ? gl(color, 0.26) : D.bdr2,
+        boxShadow: `0 8px 24px ${color ? gl(color, 0.14) : "rgba(0,0,0,0.22)"}`,
+      }
+    : undefined;
+
   return (
-    <div
-      className={`${hoverable?"zf-card":""} ${className}`}
+    <motion.div
+      className={className}
+      whileHover={hover}
+      transition={MOVE.hover}
       style={{
-        background:D.bg2, border:`1px solid ${D.bdr}`, borderRadius:16,
-        overflow:"hidden", boxShadow:`0 1px 4px ${D.shadow}`,
-        "--glow": color ? gl(color,0.10) : "rgba(0,0,0,0.2)",
-        "--bdr-hover": color ? gl(color,0.3) : D.bdr2,
+        background:D.surface,
+        borderWidth:1,
+        borderStyle:"solid",
+        borderColor:D.bdr,
+        borderRadius:R.lg,
+        boxShadow:D.sh1,
+        overflow:"hidden",
         ...style,
       }}
+      {...rest}
     >
       {children}
-    </div>
+    </motion.div>
   );
 }
 
-function PanelHeader({ title, sub, right, accent }) {
+function SectionHeader({ title, sub, right, accent }) {
   const D = useD();
   return (
-    <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
-      gap:12, padding:"16px 20px", borderBottom:`1px solid ${D.bdr}`}}>
-      <div style={{minWidth:0, display:"flex", gap:10, alignItems:"stretch"}}>
-        {accent && <span aria-hidden="true" style={{width:3, borderRadius:2, flexShrink:0,
-          background:`linear-gradient(180deg, ${accent}, ${gl(accent,0.15)})`}}/>}
-        <div>
-          <div style={{fontSize:13, fontWeight:600, color:D.t0, fontFamily:F.h, letterSpacing:"-0.01em"}}>{title}</div>
-          {sub && <div style={{fontSize:10.5, color:D.t2, marginTop:3}}>{sub}</div>}
+    <header style={{
+      display:"flex", alignItems:"center", justifyContent:"space-between", gap:SP[3],
+      padding:`${SP[4]}px ${SP[5]}px`, borderBottom:`1px solid ${D.bdr}`,
+    }}>
+      <div style={{ display:"flex", gap:SP[3], alignItems:"center", minWidth:0 }}>
+        {accent && (
+          <span aria-hidden="true" style={{
+            width:3, height:26, borderRadius:R.pill, flexShrink:0,
+            background:`linear-gradient(180deg, ${accent}, ${gl(accent, 0.15)})`,
+          }}/>
+        )}
+        <div style={{ minWidth:0 }}>
+          <h2 style={{ ...T.h2, color:D.t0, margin:0 }}>{title}</h2>
+          {sub && <p style={{ ...T.small, fontSize:11, color:D.t2, margin:"3px 0 0" }}>{sub}</p>}
         </div>
       </div>
       {right}
-    </div>
+    </header>
   );
 }
 
-// ─── STAT CARD ───────────────────────────────────────────────────────────────
-function StatCard({ icon, label, value, sub, color }) {
-  const D = useD();
-  return (
-    <Panel color={color} style={{padding:"16px 18px", display:"flex", alignItems:"center",
-      gap:14}}>
-      <IconBox icon={icon} color={color} size={40}/>
-      <div style={{flex:1, minWidth:0}}>
-        <div style={{fontSize:9, fontWeight:500, fontFamily:F.m, letterSpacing:"0.11em",
-          textTransform:"uppercase", color:D.t2, marginBottom:5}}>{label}</div>
-        <div style={{fontSize:24, fontWeight:700, lineHeight:1, color:D.t0,
-          letterSpacing:"-0.03em", fontFamily:F.h, fontVariantNumeric:"tabular-nums"}}>{value}</div>
-        {sub && <div style={{fontSize:10.5, color:D.t1, marginTop:4,
-          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{sub}</div>}
-      </div>
-    </Panel>
-  );
-}
+/* ═══════════════════════════════════════════════════════════════════════════
+   6. GRÁFICOS
+   ═════════════════════════════════════════════════════════════════════════ */
 
-// ─── AREA CHART ──────────────────────────────────────────────────────────────
-function FunnelAreaChart({ campKey, info, M, color, animBegin = 0 }) {
+// Funil: barras horizontais por etapa. Sem eixo temporal — só redução de volume.
+function FunnelBars({ campKey, info, M, color, height = 150, compact = false }) {
   const D = useD();
-  const vals = info.cols.map(c => M[c] ?? 0);
-  const data = info.etapas.map((name,i) => ({ name, value:vals[i] }));
-  const id = `area${campKey.replace(/\W/g,"")}`;
-  const TT = ({ active, payload }) => {
-    if (!active||!payload?.length) return null;
+  const mob = useIsMobile();
+  const reduce = useReducedMotion();
+  const stages = useMemo(() => getStages(info, M), [info, M]);
+  const id = `fnl-${campKey.replace(/\W/g, "")}`;
+  const top = stages[0]?.value ?? 0;
+  const hasData = top > 0;
+
+  const Tip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    const s = payload[0].payload;
     return (
-      <div style={{background:D.bg3, border:`1px solid ${D.bdr2}`, borderRadius:10,
-        padding:"10px 14px", fontFamily:F.b, boxShadow:`0 8px 24px ${D.shadow}`}}>
-        <div style={{fontSize:10, color:D.t1, marginBottom:3}}>{payload[0].payload.name}</div>
-        <div style={{fontSize:16, fontWeight:600, color:D.t0, fontFamily:F.h,
-          fontVariantNumeric:"tabular-nums"}}>{fmtNum(payload[0].value)}</div>
-        <div style={{fontSize:9, fontFamily:F.m, color:gl(color,0.85), marginTop:2}}>
-          {fmtPct(vals[0], payload[0].value)} do topo
+      <div style={{
+        background:D.elev, border:`1px solid ${D.bdr2}`, borderRadius:R.md,
+        padding:"10px 13px", boxShadow:D.sh3, fontFamily:F.b, minWidth:130,
+      }}>
+        <div style={{ fontSize:10, color:D.t1, marginBottom:4 }}>{s.name}</div>
+        <div style={{ ...T.metric, fontSize:17, color:D.t0 }}>{fmtNum(s.value)}</div>
+        <div style={{ ...T.mono, fontSize:9.5, color:gl(color, 0.9), marginTop:5 }}>
+          {s.pctTop !== null ? `${s.pctTop.toFixed(1)}% do volume de entrada` : "—"}
         </div>
+        {s.pctPrev !== null && (
+          <div style={{ ...T.mono, fontSize:9.5, color:D.t2, marginTop:2 }}>
+            {s.pctPrev.toFixed(1)}% da etapa anterior
+          </div>
+        )}
       </div>
     );
   };
+
+  if (!hasData) {
+    return (
+      <div style={{
+        height, display:"flex", alignItems:"center", justifyContent:"center",
+        ...T.small, color:D.t2, border:`1px dashed ${D.bdr}`, borderRadius:R.md,
+      }}>
+        Sem volume de entrada registrado
+      </div>
+    );
+  }
+
   return (
-    <div style={{width:"100%", height:140}}>
+    <div style={{ width:"100%", height }}>
       <ResponsiveContainer>
-        <AreaChart data={data} margin={{top:8,right:8,bottom:0,left:-20}}>
+        <BarChart data={stages} layout="vertical" barCategoryGap={compact ? 6 : 9}
+          margin={{ top:2, right:mob ? 12 : 18, bottom:0, left:0 }}>
           <defs>
-            <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity={0.32}/>
-              <stop offset="100%" stopColor={color} stopOpacity={0}/>
+            <linearGradient id={id} x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor={color} stopOpacity={0.35}/>
+              <stop offset="100%" stopColor={color} stopOpacity={0.95}/>
             </linearGradient>
           </defs>
-          <CartesianGrid vertical={false} stroke={D.bdr}/>
-          <XAxis dataKey="name" tick={{fontSize:9,fill:D.t2,fontFamily:F.m}} axisLine={false} tickLine={false}/>
-          <YAxis tick={{fontSize:9,fill:D.t2,fontFamily:F.m}} axisLine={false} tickLine={false} tickFormatter={v=>fmtNum(v)}/>
-          <Tooltip content={<TT/>} cursor={{stroke:gl(color,0.3), strokeDasharray:"3 3"}}/>
-          <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2.5}
-            isAnimationActive={!prefersReduced()}
-            animationDuration={900} animationBegin={animBegin} animationEasing="ease-out"
-            fill={`url(#${id})`} dot={{fill:color,strokeWidth:0,r:3}}
-            activeDot={{r:5.5,fill:color,stroke:D.bg2,strokeWidth:2}}/>
-        </AreaChart>
+          <CartesianGrid horizontal={false} stroke={D.bdr}/>
+          <XAxis type="number" hide domain={[0, top]}/>
+          <YAxis type="category" dataKey="name" width={compact ? 74 : (mob ? 78 : 96)}
+            tick={{ fontSize:9.5, fill:D.t1, fontFamily:F.m }}
+            axisLine={false} tickLine={false}/>
+          <Tooltip content={<Tip/>} cursor={{ fill: gl(color, 0.06) }}/>
+          <RBar dataKey="value" radius={[0, 5, 5, 0]} fill={`url(#${id})`}
+            isAnimationActive={!reduce} animationDuration={800} animationEasing="ease-out"/>
+        </BarChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-// ─── DONUT ───────────────────────────────────────────────────────────────────
-function DonutChart({ labels, values, colors }) {
+// Rosca: participação de cada campanha no volume acumulado
+function DonutChart({ labels, values, colors, totalLabel = "entradas" }) {
   const D = useD();
+  const mob = useIsMobile();
+  const reduce = useReducedMotion();
   const [idx, setIdx] = useState(null);
-  const total = values.reduce((a,b)=>a+b,0);
-  const data  = labels.map((l,i)=>({name:l,value:values[i]}));
-  const TT = ({ active, payload }) => {
-    if (!active||!payload?.length) return null;
+  const total = values.reduce((a, b) => a + b, 0);
+  const data = labels.map((l, i) => ({ name:l, value:values[i] }));
+
+  const Tip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
     const p = payload[0];
     return (
-      <div style={{background:D.bg3, border:`1px solid ${D.bdr2}`, borderRadius:10,
-        padding:"10px 14px", boxShadow:`0 8px 24px ${D.shadow}`}}>
-        <div style={{fontSize:10,color:D.t1,marginBottom:2}}>{p.name}</div>
-        <div style={{fontSize:15,fontWeight:600,color:D.t0,fontFamily:F.h,
-          fontVariantNumeric:"tabular-nums"}}>{fmtNum(p.value)}</div>
-        <div style={{fontSize:9,fontFamily:F.m,color:D.t2,marginTop:2}}>{fmtPct(total,p.value)}</div>
+      <div style={{
+        background:D.elev, border:`1px solid ${D.bdr2}`, borderRadius:R.md,
+        padding:"10px 13px", boxShadow:D.sh3, fontFamily:F.b,
+      }}>
+        <div style={{ fontSize:10, color:D.t1, marginBottom:3 }}>{p.name}</div>
+        <div style={{ ...T.metric, fontSize:16, color:D.t0 }}>{fmtNum(p.value)}</div>
+        <div style={{ ...T.mono, fontSize:9.5, color:D.t2, marginTop:3 }}>
+          {fmtPct(total, p.value)} da base
+        </div>
       </div>
     );
   };
+
+  if (total === 0) {
+    return <EmptyBlock icon="ti-chart-donut" text="Nenhuma entrada registrada nas campanhas."/>;
+  }
+
   return (
-    <div style={{display:"flex", alignItems:"center", gap:24}}>
-      <div style={{position:"relative", width:134, height:134, flexShrink:0}}>
-        <ResponsiveContainer width={134} height={134}>
+    <div style={{
+      display:"flex", alignItems:"center", gap:mob ? SP[5] : SP[6],
+      flexDirection: mob ? "column" : "row",
+    }}>
+      <div style={{ position:"relative", width:148, height:148, flexShrink:0 }}>
+        <ResponsiveContainer width={148} height={148}>
           <PieChart>
             <Pie data={data} dataKey="value" cx="50%" cy="50%"
-              innerRadius="60%" outerRadius="82%" paddingAngle={3} strokeWidth={0}
-              cornerRadius={3}
-              isAnimationActive={!prefersReduced()} animationDuration={800}
-              onMouseEnter={(_,i)=>setIdx(i)} onMouseLeave={()=>setIdx(null)}>
-              {data.map((_,i)=>(
-                <Cell key={i} fill={colors[i%colors.length]}
-                  opacity={idx===null||idx===i?1:0.28}
-                  style={{transition:"opacity .18s", cursor:"pointer"}}/>
+              innerRadius="66%" outerRadius="88%" paddingAngle={2.5} strokeWidth={0} cornerRadius={4}
+              isAnimationActive={!reduce} animationDuration={850}
+              onMouseEnter={(_, i) => setIdx(i)} onMouseLeave={() => setIdx(null)}>
+              {data.map((_, i) => (
+                <Cell key={labels[i]} fill={colors[i % colors.length]}
+                  opacity={idx === null || idx === i ? 1 : 0.24}
+                  style={{ transition:"opacity .18s", cursor:"pointer" }}/>
               ))}
             </Pie>
-            <Tooltip content={<TT/>}/>
+            <Tooltip content={<Tip/>}/>
           </PieChart>
         </ResponsiveContainer>
-        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",
-          alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-          <div style={{fontSize:19,fontWeight:700,color:D.t0,lineHeight:1,fontFamily:F.h,
-            letterSpacing:"-0.02em",fontVariantNumeric:"tabular-nums"}}>
-            {idx!==null?fmtNum(values[idx]):<AnimatedNumber value={total}/>}
-          </div>
-          <div style={{fontSize:7,fontFamily:F.m,color:D.t2,letterSpacing:"0.12em",marginTop:4,textTransform:"uppercase"}}>
-            {idx!==null?labels[idx]:"total"}
-          </div>
+
+        {/* Centro da rosca: troca de conteúdo quando uma fatia é apontada */}
+        <div style={{
+          position:"absolute", inset:0, display:"flex", flexDirection:"column",
+          alignItems:"center", justifyContent:"center", pointerEvents:"none",
+        }}>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={idx ?? "total"}
+              initial={{ opacity:0, y:4 }}
+              animate={{ opacity:1, y:0 }}
+              exit={{ opacity:0, y:-4 }}
+              transition={{ duration:0.16, ease:EASE }}
+              style={{ display:"flex", flexDirection:"column", alignItems:"center" }}
+            >
+              <div style={{ ...T.metric, fontSize:21, color:D.t0 }}>
+                {idx !== null ? fmtNum(values[idx]) : <AnimatedNumber value={total}/>}
+              </div>
+              <div style={{ ...T.eyebrow, fontSize:7.5, color:D.t2, marginTop:5, maxWidth:100, textAlign:"center" }}>
+                {idx !== null ? labels[idx] : totalLabel}
+              </div>
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
-      <div style={{flex:1,display:"flex",flexDirection:"column",gap:9}}>
-        {labels.map((l,i)=>(
-          <div key={i} style={{display:"flex",alignItems:"center",gap:8,
-            opacity:idx===null||idx===i?1:0.35,transition:"opacity .15s",cursor:"default"}}
-            onMouseEnter={()=>setIdx(i)} onMouseLeave={()=>setIdx(null)}>
-            <div style={{width:7,height:7,borderRadius:2.5,background:colors[i%colors.length],flexShrink:0,
-              boxShadow:`0 0 4px ${gl(colors[i%colors.length],0.28)}`}}/>
-            <div style={{flex:1,fontSize:11,color:D.t1}}>{l}</div>
-            <div style={{fontSize:11,fontFamily:F.m,fontWeight:600,color:D.t0,
-              fontVariantNumeric:"tabular-nums"}}>{fmtNum(values[i])}</div>
-            <div style={{fontSize:9,fontFamily:F.m,color:D.t2,width:36,textAlign:"right",
-              fontVariantNumeric:"tabular-nums"}}>{fmtPct(total,values[i])}</div>
-          </div>
+
+      <ul style={{ flex:1, width:"100%", listStyle:"none", margin:0, padding:0,
+        display:"flex", flexDirection:"column", gap:SP[2] }}>
+        {labels.map((l, i) => (
+          <motion.li key={l}
+            onMouseEnter={() => setIdx(i)} onMouseLeave={() => setIdx(null)}
+            animate={{ opacity: idx === null || idx === i ? 1 : 0.4 }}
+            transition={{ duration:0.15 }}
+            style={{ display:"flex", alignItems:"center", gap:SP[2] }}>
+            <span aria-hidden="true" style={{
+              width:7, height:7, borderRadius:2.5, flexShrink:0,
+              background:colors[i % colors.length],
+              boxShadow:`0 0 5px ${gl(colors[i % colors.length], 0.3)}`,
+            }}/>
+            <span style={{ flex:1, ...T.small, color:D.t1, overflow:"hidden",
+              textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{l}</span>
+            <span style={{ ...T.mono, fontWeight:600, color:D.t0 }}>{fmtNum(values[i])}</span>
+            <span style={{ ...T.mono, fontSize:10, color:D.t2, width:44, textAlign:"right" }}>
+              {fmtPct(total, values[i])}
+            </span>
+          </motion.li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
 
-// ─── CAMPAIGN TABLE ROW ───────────────────────────────────────────────────────
-function CampTableRow({ rank, name, icon, leads, conv, convClr, subLabel, subValue, color, onClick, isLast }) {
+/* ═══════════════════════════════════════════════════════════════════════════
+   7. ESTADOS — vazio, erro, carregando
+   ═════════════════════════════════════════════════════════════════════════ */
+
+function EmptyBlock({ icon = "ti-database-off", text, action }) {
   const D = useD();
-  const [hov, setHov] = useState(false);
   return (
-    <button onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} onClick={onClick}
-      className="zf-focus zf-row"
-      style={{display:"flex",alignItems:"center",gap:14,padding:"13px 20px",width:"100%",
-        cursor:"pointer", background:hov?D.bg3:"transparent", border:"none",
-        borderBottom:isLast?"none":`1px solid ${D.bdr}`,
-        transition:"background .12s", textAlign:"left", fontFamily:F.b,
-        animationDelay:`${rank*60}ms`}}>
-      <div style={{fontSize:10,fontFamily:F.m,color:hov?gl(color,0.9):D.t2,width:18,flexShrink:0,
-        textAlign:"center",transition:"color .12s"}}>{String(rank).padStart(2,"0")}</div>
-      <IconBox icon={icon} color={color} size={34}/>
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:12.5,fontWeight:600,color:D.t0,overflow:"hidden",
-          textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div>
-        <div style={{fontSize:10,color:D.t1,marginTop:2}}>{subLabel}:{" "}
-          <span style={{color:D.t0,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmtNum(subValue)}</span></div>
-      </div>
-      <div style={{textAlign:"right",flexShrink:0}}>
-        <div style={{fontSize:14,fontWeight:700,color:D.t0,fontFamily:F.h,
-          fontVariantNumeric:"tabular-nums"}}>{fmtNum(leads)}</div>
-        <div style={{fontSize:9,color:D.t2,fontFamily:F.m,marginTop:1}}>leads</div>
-      </div>
-      <div style={{textAlign:"right",width:52,flexShrink:0}}>
-        <div style={{fontSize:13,fontWeight:600,color:convClr,fontFamily:F.m,
-          fontVariantNumeric:"tabular-nums"}}>{conv}</div>
-        <div style={{fontSize:9,color:D.t2,fontFamily:F.m,marginTop:1}}>conv.</div>
-      </div>
-      <div style={{width:60,flexShrink:0}}>
-        <Bar value={parseFloat(conv)} height={4} radius={2} delay={rank*120}
-          track={gl(color,0.14)}
-          fill={`linear-gradient(90deg,${gl(color,0.7)},${color})`}/>
-      </div>
-      <i className="ti ti-chevron-right" style={{fontSize:14,flexShrink:0,
-        color:hov?gl(color,0.9):D.t2, transform:hov?"translateX(2px)":"translateX(0)",
-        transition:"color .12s, transform .15s"}}/>
-    </button>
+    <div style={{
+      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      gap:SP[3], padding:`${SP[7]}px ${SP[5]}px`, textAlign:"center",
+      border:`1px dashed ${D.bdr2}`, borderRadius:R.md, color:D.t2,
+    }}>
+      <i className={`ti ${icon}`} style={{ fontSize:22, color:D.t2 }} aria-hidden="true"/>
+      <p style={{ ...T.small, color:D.t1, margin:0, maxWidth:320 }}>{text}</p>
+      {action}
+    </div>
   );
 }
 
-// ─── SKELETON (loading) ──────────────────────────────────────────────────────
-function Sk({ h=14, w="100%", r=8, style }) {
-  return <div className="zf-shimmer" style={{height:h,width:w,borderRadius:r,...style}}/>;
+function ErrorState({ message, onRetry }) {
+  const D = useD();
+  return (
+    <div role="alert" style={{
+      display:"flex", gap:SP[3], alignItems:"flex-start",
+      padding:`${SP[4]}px ${SP[5]}px`, marginBottom:SP[5],
+      background:gl(D.err, 0.07), border:`1px solid ${gl(D.err, 0.2)}`,
+      borderRadius:R.lg, color:D.err,
+    }}>
+      <i className="ti ti-alert-triangle" style={{ fontSize:17, marginTop:1, flexShrink:0 }} aria-hidden="true"/>
+      <div style={{ flex:1, minWidth:0 }}>
+        <p style={{ ...T.body, fontWeight:600, margin:0 }}>Os dados do Google Sheets não foram carregados.</p>
+        <p style={{ ...T.small, color:D.t1, margin:"3px 0 0" }}>
+          Verifique se a planilha continua pública e tente sincronizar novamente.
+        </p>
+        <p style={{ ...T.mono, fontSize:9.5, opacity:0.7, margin:"6px 0 0" }}>{message}</p>
+      </div>
+      <motion.button onClick={onRetry} className="zf-focus"
+        whileHover={{ background: gl(D.err, 0.18) }}
+        whileTap={{ scale:0.97 }}
+        transition={MOVE.hover}
+        style={{
+          flexShrink:0, ...T.mono, fontSize:10, fontWeight:600, color:D.err,
+          background:gl(D.err, 0.1), border:`1px solid ${gl(D.err, 0.28)}`,
+          borderRadius:R.md, padding:"8px 14px", cursor:"pointer", minHeight:36,
+        }}>
+        Sincronizar
+      </motion.button>
+    </div>
+  );
 }
+
+function Sk({ h = 14, w = "100%", r = R.sm, style }) {
+  return <div className="zf-shimmer" style={{ height:h, width:w, borderRadius:r, ...style }}/>;
+}
+
 function LoadingSkeleton({ mob }) {
   const D = useD();
-  const card = {background:D.bg2, border:`1px solid ${D.bdr}`, borderRadius:16, padding:18};
+  const card = { background:D.surface, border:`1px solid ${D.bdr}`, borderRadius:R.lg, padding:SP[5] };
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:20}} aria-busy="true" aria-label="Carregando dados">
+    <div style={{ display:"flex", flexDirection:"column", gap:SP[6] }} aria-busy="true" aria-live="polite">
       <div>
-        <Sk h={20} w={220}/><Sk h={11} w={300} style={{marginTop:10}}/>
+        <Sk h={26} w={260}/>
+        <Sk h={12} w={340} style={{ marginTop:SP[3] }}/>
+        <div style={{ display:"flex", gap:SP[2], marginTop:SP[4] }}>
+          {[0, 1, 2].map(i => <Sk key={i} h={26} w={110} r={R.pill}/>)}
+        </div>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"repeat(4,1fr)",gap:12}}>
-        {[0,1,2,3].map(i=>(
-          <div key={i} style={{...card, display:"flex", gap:14, alignItems:"center"}}>
-            <Sk h={40} w={40} r={12}/>
-            <div style={{flex:1}}><Sk h={9} w="60%"/><Sk h={20} w="45%" style={{marginTop:8}}/></div>
+      <div style={{ display:"grid", gridTemplateColumns: mob ? "1fr 1fr" : "repeat(4,1fr)", gap:SP[3] }}>
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} style={card}>
+            <Sk h={9} w="55%"/>
+            <Sk h={28} w="70%" style={{ marginTop:SP[4] }}/>
+            <Sk h={5} w="100%" r={R.pill} style={{ marginTop:SP[4] }}/>
           </div>
         ))}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"3fr 2fr",gap:14}}>
-        <div style={card}>
-          {[0,1,2].map(i=><Sk key={i} h={44} style={{marginBottom:i<2?12:0}}/>)}
-        </div>
-        <div style={{...card, display:"flex", alignItems:"center", gap:20}}>
-          <Sk h={120} w={120} r={"50%"}/>
-          <div style={{flex:1}}>{[0,1,2].map(i=><Sk key={i} h={11} style={{marginBottom:i<2?10:0}}/>)}</div>
+      <div style={{ display:"grid", gridTemplateColumns: mob ? "1fr" : "1.6fr 1fr", gap:SP[4] }}>
+        <div style={card}>{[0, 1, 2].map(i => <Sk key={i} h={48} style={{ marginBottom: i < 2 ? SP[3] : 0 }}/>)}</div>
+        <div style={{ ...card, display:"flex", alignItems:"center", gap:SP[5] }}>
+          <Sk h={130} w={130} r="50%"/>
+          <div style={{ flex:1 }}>{[0, 1, 2].map(i => <Sk key={i} h={11} style={{ marginBottom: i < 2 ? SP[3] : 0 }}/>)}</div>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── FUNNEL DETAIL ───────────────────────────────────────────────────────────
-function FunnelDetail({ campKey, info, M, color, onBack }) {
+/* ═══════════════════════════════════════════════════════════════════════════
+   8. MÉTRICAS
+   ═════════════════════════════════════════════════════════════════════════ */
+
+function MetricCard({ label, icon, color, value, children }) {
+  const D = useD();
+  return (
+    <Surface color={color} variants={rise} style={{ padding:`${SP[5]}px ${SP[5]}px ${SP[4]}px`, position:"relative" }}>
+      <span aria-hidden="true" style={{
+        position:"absolute", top:0, left:0, right:0, height:1,
+        background:`linear-gradient(90deg, ${gl(color, 0.55)}, transparent 70%)`,
+      }}/>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:SP[3] }}>
+        <Eyebrow style={{ paddingTop:2 }}>{label}</Eyebrow>
+        <i className={`ti ${icon}`} aria-hidden="true"
+          style={{ fontSize:15, color:gl(color, 0.75), flexShrink:0 }}/>
+      </div>
+      <div style={{ ...T.metric, fontSize:32, color:D.t0, marginTop:SP[4] }}>{value}</div>
+      <div style={{ marginTop:SP[4] }}>{children}</div>
+    </Surface>
+  );
+}
+
+function MetricFoot({ children }) {
+  const D = useD();
+  return <p style={{ ...T.small, fontSize:11, color:D.t1, margin:0,
+    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{children}</p>;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   9. LISTA DE CAMPANHAS
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* O hover não guarda estado: whileHover="hover" propaga o rótulo da variante
+   para os filhos, então o número, a seta e a borda reagem juntos — sem um
+   único re-render. */
+function CampaignRow({ rank, name, info, leads, conv, convRate, color, onClick, isLast }) {
   const D = useD();
   const mob = useIsMobile();
-  const vals = info.cols.map(c => M[c] ?? 0);
-  const topo = vals[0] || 1;
-  const finalConv = safePct(topo, vals[vals.length-1]);
-  const convClr = finalConv>60?D.ok:finalConv>30?D.warn:D.err;
+  const clr = rateColor(convRate, D, color);
+  const action = info.kpi_sub_label.replace("→", "").trim();
+
+  const row = {
+    ...slide,
+    hover: {
+      backgroundColor: D.surfaceAlt,
+      borderLeftColor: color,
+      transition: MOVE.hover,
+    },
+  };
+  const rankVar   = { show:{ color:D.t2 },  hover:{ color:gl(color, 0.9) } };
+  const chevron   = { show:{ x:0, color:D.t2 }, hover:{ x:3, color:gl(color, 0.9) } };
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <div className="zf-in" style={{display:"flex",alignItems:"center",gap:11}}>
-        <button onClick={onBack} aria-label="Voltar para o dashboard" className="zf-focus"
-          style={{width:34,height:34,borderRadius:10,background:gl(color,0.1),
-            border:`1px solid ${gl(color,0.22)}`,display:"flex",alignItems:"center",
-            justifyContent:"center",color,cursor:"pointer",fontSize:15,
-            transition:"background .15s"}}
-          onMouseEnter={e=>{e.currentTarget.style.background=gl(color,0.18);}}
-          onMouseLeave={e=>{e.currentTarget.style.background=gl(color,0.1);}}>
-          <i className="ti ti-arrow-left"/>
-        </button>
-        <IconBox icon={info.icon} color={color} size={34}/>
-        <div>
-          <div style={{fontSize:16,fontWeight:700,color:D.t0,fontFamily:F.h,letterSpacing:"-0.01em"}}>{campKey}</div>
-          <div style={{fontSize:10.5,color:D.t1,marginTop:1}}>Detalhe da automação</div>
+    <motion.button
+      type="button"
+      onClick={onClick}
+      variants={row}
+      whileHover="hover"
+      whileTap={{ scale:0.995 }}
+      className="zf-focus"
+      aria-label={`Abrir desempenho do funil da campanha ${name}`}
+      style={{
+        display:"flex", alignItems:"center", gap: mob ? SP[3] : SP[4],
+        padding: mob ? `${SP[3]}px ${SP[4]}px` : `${SP[4]}px ${SP[5]}px`,
+        width:"100%", minHeight:64, cursor:"pointer", textAlign:"left",
+        backgroundColor:"transparent",
+        border:"none",
+        borderBottom: isLast ? "none" : `1px solid ${D.bdr}`,
+        borderLeft:"2px solid transparent",
+        fontFamily:F.b,
+      }}>
+      {!mob && (
+        <motion.span variants={rankVar} transition={MOVE.hover}
+          style={{ ...T.mono, fontSize:10, width:16, textAlign:"center", flexShrink:0, color:D.t2 }}>
+          {String(rank).padStart(2, "0")}
+        </motion.span>
+      )}
+      <IconBox icon={info.icon} color={color} size={mob ? 30 : 34}/>
+
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ ...T.body, fontSize:12.5, fontWeight:600, color:D.t0,
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{name}</div>
+        <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:3, ...T.small, fontSize:10.5, color:D.t2 }}>
+          <span style={{ ...T.mono, fontSize:9.5, color:gl(color, 0.9) }}>{action}</span>
+          <span aria-hidden="true">·</span>
+          <span>{fmtNum(conv)} conversões finais</span>
         </div>
       </div>
 
-      <div className="zf-in" style={{animationDelay:".05s",display:"grid",
-        gridTemplateColumns:mob?"1fr 1fr":`repeat(${Math.min(info.cols.length,5)},1fr)`,gap:10}}>
-        {info.etapas.map((etapa,i)=>(
-          <Panel key={i} color={color} style={{
-            background:i===0?gl(color,0.08):D.bg2,
-            border:`1px solid ${i===0?gl(color,0.3):D.bdr}`,
-            padding:"16px 18px",position:"relative"}}>
-            {i===0&&<div style={{position:"absolute",top:0,left:0,right:0,height:2,
-              background:`linear-gradient(90deg,${color},${gl(color,0)})`}}/>}
-            <div style={{fontSize:9,fontWeight:500,fontFamily:F.m,letterSpacing:"0.11em",
-              textTransform:"uppercase",color:i===0?gl(color,0.85):D.t2,marginBottom:9}}>{etapa}</div>
-            <div style={{fontSize:26,fontWeight:700,color:D.t0,lineHeight:1,fontFamily:F.h,
-              letterSpacing:"-0.03em",fontVariantNumeric:"tabular-nums"}}>
-              <AnimatedNumber value={vals[i]} delay={i*100}/>
-            </div>
-            {i>0&&<div style={{marginTop:8}}><Tag color={color}>{fmtPct(topo,vals[i])} do topo</Tag></div>}
-          </Panel>
-        ))}
+      <div style={{ textAlign:"right", flexShrink:0, minWidth:56 }}>
+        <div style={{ ...T.metric, fontSize:15, color:D.t0 }}>{fmtNum(leads)}</div>
+        <div style={{ ...T.eyebrow, fontSize:8, color:D.t2, marginTop:3 }}>entradas</div>
       </div>
 
-      <div className="zf-in" style={{animationDelay:".1s",display:"grid",
-        gridTemplateColumns:mob?"1fr":"1fr 1fr",gap:14}}>
-        <Panel color={color}>
-          <PanelHeader title="Funil da automação" sub="Volume por etapa" accent={color}/>
-          <div style={{padding:"12px 20px 16px"}}>
-            <FunnelAreaChart campKey={campKey} info={info} M={M} color={color}/>
-          </div>
-        </Panel>
-
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <Panel color={color} style={{flex:1}}>
-            <PanelHeader title="Conversão por etapa" sub="% do topo que chegou a cada passo" accent={color}/>
-            <div style={{padding:"8px 20px 14px"}}>
-              {info.etapas.slice(1).map((e,i)=>{
-                const r=safePct(topo,vals[i+1]);
-                const clr=r>70?D.ok:r>40?color:r>20?D.warn:D.err;
-                return (
-                  <div key={i}>
-                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
-                      <div style={{fontSize:11,color:D.t1,flex:"0 0 130px",lineHeight:1.3}}>Topo → {e}</div>
-                      <div style={{flex:1}}>
-                        <Bar value={r} height={5} radius={3} delay={i*130}
-                          track={gl("#000",0.08)}
-                          fill={`linear-gradient(90deg,${gl(clr,0.7)},${clr})`}/>
-                      </div>
-                      <div style={{fontSize:11,fontWeight:600,fontFamily:F.m,color:clr,width:44,
-                        textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{r.toFixed(1)}%</div>
-                    </div>
-                    {i<info.etapas.length-2&&<Divider/>}
-                  </div>
-                );
-              })}
-            </div>
-          </Panel>
-
-          <Panel color={color} style={{
-            background:gl(color,0.07),border:`1px solid ${gl(color,0.22)}`,
-            padding:"18px 20px",position:"relative",
-            boxShadow:`0 0 18px ${gl(color,0.06)}`}}>
-            <div style={{position:"absolute",top:0,left:0,right:0,height:2,
-              background:`linear-gradient(90deg,${color},${gl(color,0)})`}}/>
-            <div style={{fontSize:9,fontWeight:500,fontFamily:F.m,letterSpacing:"0.11em",
-              textTransform:"uppercase",color:gl(color,0.75),marginBottom:10}}>Conversão final</div>
-            <div style={{fontSize:42,fontWeight:700,color:convClr,letterSpacing:"-0.04em",
-              lineHeight:1,marginBottom:8,fontFamily:F.h,fontVariantNumeric:"tabular-nums"}}>
-              <AnimatedNumber value={finalConv} duration={1100} format={(n)=>`${n.toFixed(1)}%`}/>
-            </div>
-            <div style={{fontSize:11,color:D.t1}}>
-              <span style={{color:D.t0,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmtNum(topo)}</span> entraram ·{" "}
-              <span style={{color:D.t0,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmtNum(vals[vals.length-1])}</span> converteram
-            </div>
-          </Panel>
+      {!mob && (
+        <div style={{ width:78, flexShrink:0 }}>
+          <Meter value={convRate} color={clr} delay={rank * 110} height={4}/>
         </div>
+      )}
+
+      <div style={{ textAlign:"right", width:52, flexShrink:0 }}>
+        <div style={{ ...T.mono, fontSize:13, fontWeight:600, color:clr }}>{fmtRate(convRate)}</div>
+        <div style={{ ...T.eyebrow, fontSize:8, color:D.t2, marginTop:3 }}>conv.</div>
       </div>
-    </div>
+
+      <motion.i className="ti ti-chevron-right" aria-hidden="true"
+        variants={chevron} transition={MOVE.hover}
+        style={{ fontSize:15, flexShrink:0, color:D.t2 }}/>
+    </motion.button>
   );
 }
 
-// ─── OVERVIEW ────────────────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════════════════════
+   10. PONTOS DE ATENÇÃO
+   ═════════════════════════════════════════════════════════════════════════ */
+
+function AttentionRow({ name, info, drop, color, onClick, isLast }) {
+  const D = useD();
+  const mob = useIsMobile();
+  const cls = classifyDrop(drop?.lossRate, D);
+
+  const row = {
+    ...slide,
+    hover: { backgroundColor: D.surfaceAlt, transition: MOVE.hover },
+  };
+
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      variants={row}
+      whileHover="hover"
+      whileTap={{ scale:0.995 }}
+      className="zf-focus"
+      aria-label={`Abrir campanha ${name}`}
+      style={{
+        display:"flex", alignItems:"center", gap: mob ? SP[3] : SP[4], width:"100%",
+        padding: mob ? `${SP[3]}px ${SP[4]}px` : `${SP[4]}px ${SP[5]}px`,
+        minHeight:60, textAlign:"left", cursor:"pointer",
+        backgroundColor:"transparent",
+        border:"none", borderBottom: isLast ? "none" : `1px solid ${D.bdr}`,
+        fontFamily:F.b,
+      }}>
+      <IconBox icon={info.icon} color={color} size={mob ? 28 : 30}/>
+
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ ...T.body, fontSize:12, fontWeight:600, color:D.t0,
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{name}</div>
+        {drop ? (
+          <div style={{ ...T.small, fontSize:10.5, color:D.t2, marginTop:3,
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+            {drop.from} <span style={{ color:cls.color }}>→</span> {drop.to} ·{" "}
+            <span style={{ ...T.mono, fontSize:10, color:D.t1 }}>
+              {fmtNum(drop.lost)} contatos não avançaram
+            </span>
+          </div>
+        ) : (
+          <div style={{ ...T.small, fontSize:10.5, color:D.t2, marginTop:3 }}>
+            Sem volume de entrada para avaliar
+          </div>
+        )}
+      </div>
+
+      {!mob && <Badge color={cls.color}>{cls.label}</Badge>}
+
+      <div style={{ textAlign:"right", width:56, flexShrink:0 }}>
+        <div style={{ ...T.metric, fontSize:15, color:cls.color }}>
+          {drop ? fmtRate(drop.lossRate) : "—"}
+        </div>
+        <div style={{ ...T.eyebrow, fontSize:8, color:D.t2, marginTop:3 }}>queda</div>
+      </div>
+    </motion.button>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   11. VISÃO GERAL
+   ═════════════════════════════════════════════════════════════════════════ */
+
 function Overview({ ecoKey, M, theme, onSelect, timeStr }) {
   const D = useD();
   const mob = useIsMobile();
-  const camps = Object.entries(CAMPANHAS[ecoKey]);
-  const colors = [theme.c0, theme.c1, theme.c2, theme.c3];
-  const total = camps.reduce((acc,[,info])=>acc+(M[info.cols[0]]??0),0);
-  const totalConv = camps.reduce((acc,[,info])=>{acc+=M[info.kpi_sub_col]??0;return acc;},0);
-  const bestCamp = camps.reduce((best,[key,info])=>{
-    const conv=safePct(M[info.cols[0]]??0,M[info.kpi_sub_col]??0);
-    return conv>(best.conv||0)?{key,conv}:best;
-  },{});
-  const cLabels = camps.map(([k])=>k.split(" ")[0]+(k.split(" ")[1]?" "+k.split(" ")[1].slice(0,4)+".":""));
-  const cVals   = camps.map(([,info])=>M[info.cols[0]]??0);
+  const colors = useMemo(() => [theme.c0, theme.c1, theme.c2, theme.c3], [theme]);
+
+  const camps = useMemo(() => {
+    return Object.entries(CAMPANHAS[ecoKey]).map(([key, info], i) => {
+      const leads = M[info.cols[0]] ?? 0;
+      const conv = M[info.kpi_sub_col] ?? 0;
+      return {
+        key, info, leads, conv,
+        rate: safePct(leads, conv),
+        drop: getBiggestDrop(info, M),
+        color: colors[i % colors.length],
+      };
+    });
+  }, [ecoKey, M, colors]);
+
+  const total = camps.reduce((a, c) => a + c.leads, 0);
+  const totalConv = camps.reduce((a, c) => a + c.conv, 0);
+  const globalRate = safePct(total, totalConv);
+  const best = camps.reduce((b, c) => (c.rate > (b?.rate ?? -1) ? c : b), null);
+  const hasData = total > 0;
+
+  const ranked = useMemo(() => [...camps].sort((a, b) => b.leads - a.leads), [camps]);
+  const attention = useMemo(
+    () => [...camps].sort((a, b) => (b.drop?.lossRate ?? -1) - (a.drop?.lossRate ?? -1)),
+    [camps]
+  );
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:20}}>
-      <div className="zf-in" style={{textAlign:"center",padding:"6px 0 2px"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:10}}>
-          <span className="zf-live" style={{width:6,height:6,borderRadius:"50%",
-            background:theme.c0,flexShrink:0}}/>
-          <span style={{fontSize:9,fontWeight:600,fontFamily:F.m,letterSpacing:"0.16em",
-            textTransform:"uppercase",color:gl(theme.c0,0.85)}}>
-            Visão geral · {theme.name}
-          </span>
+    <motion.div
+      variants={stagger}
+      initial="hidden"
+      animate="show"
+      style={{ display:"flex", flexDirection:"column", gap: mob ? SP[5] : SP[6] }}>
+
+      {/* Cabeçalho */}
+      <motion.header variants={rise} style={{ textAlign:"left", width:"100%" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:SP[2], marginBottom:SP[3] }}>
+          <span className="zf-live" aria-hidden="true"
+            style={{ width:6, height:6, borderRadius:"50%", background:theme.c0, flexShrink:0 }}/>
+          <Eyebrow color={gl(theme.c0, 0.9)}>{theme.name}</Eyebrow>
         </div>
-        <div style={{fontSize:mob?27:34,fontWeight:700,fontFamily:F.h,
-          letterSpacing:"-0.03em",lineHeight:1.05,width:"fit-content",
-          margin:"0 auto",
-          background:`linear-gradient(115deg, ${D.t0} 45%, ${theme.c0} 100%)`,
-          WebkitBackgroundClip:"text",backgroundClip:"text",
-          WebkitTextFillColor:"transparent",color:"transparent"}}>
+        <h1 style={{
+          ...T.display, fontSize: mob ? 26 : 32, margin:0, width:"fit-content",
+          background:`linear-gradient(100deg, ${D.t0} 55%, ${theme.c0} 100%)`,
+          WebkitBackgroundClip:"text", backgroundClip:"text",
+          WebkitTextFillColor:"transparent", color:"transparent",
+        }}>
           Olá, We Worker!
+        </h1>
+        <p style={{ ...T.body, color:D.t1, margin:`${SP[2]}px 0 0`, maxWidth:560 }}>
+          Acompanhe o desempenho acumulado das campanhas e identifique gargalos nos funis.
+        </p>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:SP[2], marginTop:SP[4] }}>
+          <Chip icon="ti-bolt" color={theme.c0}>
+            {camps.length} campanha{camps.length > 1 ? "s" : ""} monitorada{camps.length > 1 ? "s" : ""}
+          </Chip>
+          <Chip icon="ti-database" color={theme.c1}>Dados acumulados</Chip>
+          {timeStr && <Chip color={D.ok} live>Última sincronização · {timeStr}</Chip>}
+          <Chip icon="ti-plug-connected" color={D.t1}>ManyChat · Google Sheets</Chip>
         </div>
-        <div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:8,marginTop:14}}>
-          <MetaChip icon="ti-bolt" color={theme.c0}>
-            {camps.length} campanha{camps.length>1?"s":""} ativa{camps.length>1?"s":""}
-          </MetaChip>
-          {timeStr && (
-            <MetaChip icon="ti-clock" color={D.ok}>Atualizado às {timeStr}</MetaChip>
-          )}
-          <MetaChip icon="ti-plug-connected" color={theme.c1}>ManyChat · Google Sheets</MetaChip>
-        </div>
-      </div>
+      </motion.header>
 
-      <div className="zf-in" style={{animationDelay:".05s",display:"grid",
-        gridTemplateColumns:mob?"1fr 1fr":"repeat(4,1fr)",gap:12}}>
-        <StatCard icon="ti-users" label="Total na base" value={<AnimatedNumber value={total}/>} sub="entradas nos funis" color={theme.c0}/>
-        <StatCard icon="ti-brand-whatsapp" label="Conversões" value={<AnimatedNumber value={totalConv} delay={100}/>} sub={`${fmtPct(total,totalConv)} do total`} color={D.ok}/>
-        <StatCard icon="ti-trophy" label="Melhor campanha" value={<AnimatedNumber value={bestCamp.conv??0} delay={200} format={(n)=>`${n.toFixed(1)}%`}/>} sub={bestCamp.key} color={theme.c1}/>
-        <StatCard icon="ti-bolt" label="Campanhas ativas" value={<AnimatedNumber value={camps.length} delay={300} duration={600}/>} sub="automações ManyChat" color={theme.c2}/>
-      </div>
+      {!hasData && (
+        <Surface hoverable={false} variants={rise} style={{ padding:SP[6] }}>
+          <EmptyBlock
+            icon="ti-inbox"
+            text="Nenhuma entrada acumulada foi encontrada nesta planilha. Assim que os contatos entrarem nos fluxos do ManyChat, os funis aparecem aqui."
+          />
+        </Surface>
+      )}
 
-      <div className="zf-in" style={{animationDelay:".1s",display:"grid",
-        gridTemplateColumns:mob?"1fr":"3fr 2fr",gap:14}}>
-        <Panel color={theme.c0}>
-          <PanelHeader title="Top Campanhas" sub="Clique em uma campanha para ver o detalhe" accent={theme.c0}
-            right={<Tag color={theme.c0}>ManyChat</Tag>}/>
-          {camps.map(([key,info],i)=>{
-            const leads=M[info.cols[0]]??0;
-            const subV=M[info.kpi_sub_col]??0;
-            const conv=safePct(leads,subV);
-            const clr=conv>60?D.ok:conv>30?D.warn:D.err;
-            return (
-              <CampTableRow key={key} rank={i+1} name={key} icon={info.icon}
-                leads={leads} conv={`${conv.toFixed(1)}%`} convClr={clr}
-                subLabel={info.kpi_sub_label} subValue={subV}
-                color={colors[i%colors.length]}
-                onClick={()=>onSelect(key)} isLast={i===camps.length-1}/>
-            );
-          })}
-        </Panel>
+      {hasData && (
+        <>
+          {/* Métricas */}
+          <motion.section variants={stagger} aria-label="Indicadores acumulados" style={{
+            display:"grid",
+            gridTemplateColumns: mob ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap:SP[3],
+          }}>
+            <MetricCard label="Volume de entrada" icon="ti-users" color={theme.c0}
+              value={<AnimatedNumber value={total}/>}>
+              <MetricFoot>Contatos acumulados nos funis</MetricFoot>
+            </MetricCard>
 
-        <Panel color={theme.c0}>
-          <PanelHeader title="Distribuição" sub="Participação percentual por campanha" accent={theme.c0}/>
-          <div style={{padding:"20px"}}>
-            <DonutChart labels={cLabels} values={cVals} colors={colors}/>
-          </div>
-        </Panel>
-      </div>
-
-      <Panel color={theme.c0} className="zf-in" style={{animationDelay:".15s"}}>
-        <PanelHeader title="Funis por automação" sub="Volume relativo ao topo de cada campanha" accent={theme.c0}/>
-        <div style={{padding:"20px",display:"grid",
-          gridTemplateColumns:mob?"1fr":"repeat(auto-fit,minmax(220px,1fr))",gap:24}}>
-          {camps.map(([key,info],i)=>{
-            const clr=colors[i%colors.length];
-            return (
-              <div key={key}>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-                  <IconBox icon={info.icon} color={clr} size={24}/>
-                  <span style={{fontSize:10,fontWeight:600,fontFamily:F.m,
-                    letterSpacing:"0.09em",textTransform:"uppercase",color:D.t2}}>{key.split(" ")[0]}</span>
+            <MetricCard label="Conversões finais" icon="ti-target-arrow" color={D.ok}
+              value={<AnimatedNumber value={totalConv} delay={90}/>}>
+              <div style={{ display:"flex", alignItems:"center", gap:SP[2] }}>
+                <div style={{ flex:1 }}>
+                  <Meter value={globalRate} color={D.ok} delay={140} height={4}/>
                 </div>
-                <FunnelAreaChart campKey={key} info={info} M={M} color={clr} animBegin={i*180}/>
+                <span style={{ ...T.mono, fontSize:10, color:D.t1 }}>{fmtRate(globalRate)}</span>
               </div>
-            );
-          })}
-        </div>
-      </Panel>
+            </MetricCard>
 
-      <Panel color={theme.c0} className="zf-in" style={{animationDelay:".2s"}}>
-        <PanelHeader title="Taxas de conversão" sub="% do topo que avançou em cada etapa" accent={theme.c0}/>
-        <div style={{padding:"8px 20px 16px",display:"grid",
-          gridTemplateColumns:mob?"1fr":"1fr 1fr",gap:"0 40px"}}>
-          {camps.flatMap(([key,info],ci)=>{
-            const topo=M[info.cols[0]]??0;
-            const clr=colors[ci%colors.length];
-            return info.cols.slice(1).map((col,i)=>{
-              const r=safePct(topo,M[col]??0);
-              const rClr=r>70?D.ok:r>40?clr:r>20?D.warn:D.err;
-              return (
-                <div key={`${key}${i}`}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6,flex:"0 0 170px"}}>
-                      <span style={{width:6,height:6,borderRadius:"50%",background:clr,flexShrink:0,
-                        boxShadow:`0 0 4px ${gl(clr,0.28)}`}}/>
-                      <span style={{fontSize:11,color:D.t1,lineHeight:1.3}}>
-                        {key.split(" ")[0]} → {info.etapas[i+1]}
-                      </span>
-                    </div>
-                    <div style={{flex:1}}>
-                      <Bar value={r} height={5} radius={3} delay={(ci*3+i)*70}
-                        track={gl("#000",0.07)}
-                        fill={`linear-gradient(90deg,${gl(rClr,0.7)},${rClr})`}/>
-                    </div>
-                    <span style={{fontSize:11,fontWeight:600,fontFamily:F.m,color:rClr,width:44,
-                      textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
-                      {r>0?`${r.toFixed(1)}%`:"—"}
-                    </span>
-                  </div>
-                  <Divider/>
+            <MetricCard label="Melhor campanha" icon="ti-award" color={theme.c1}
+              value={<AnimatedNumber value={best?.rate ?? 0} delay={180} format={(n) => `${n.toFixed(1)}%`}/>}>
+              {best ? (
+                <div style={{ display:"flex", alignItems:"center", gap:SP[2], minWidth:0 }}>
+                  <IconBox icon={best.info.icon} color={best.color} size={20}/>
+                  <MetricFoot>{best.key}</MetricFoot>
                 </div>
-              );
-            });
-          })}
+              ) : <MetricFoot>—</MetricFoot>}
+            </MetricCard>
+
+            <MetricCard label="Campanhas ativas" icon="ti-stack-2" color={theme.c2}
+              value={<AnimatedNumber value={camps.length} delay={260} duration={600}/>}>
+              <div style={{ display:"flex", gap:5, alignItems:"center" }} aria-hidden="true">
+                {camps.map((c, i) => (
+                  <motion.span key={c.key}
+                    initial={{ scaleX:0 }} animate={{ scaleX:1 }}
+                    transition={{ duration:0.5, delay:0.3 + i * 0.07, ease:EASE }}
+                    style={{
+                      height:4, flex:1, borderRadius:R.pill, originX:0,
+                      background:gl(c.color, 0.85),
+                    }}/>
+                ))}
+              </div>
+            </MetricCard>
+          </motion.section>
+
+          {/* Campanhas + Distribuição */}
+          <motion.section variants={stagger} style={{
+            display:"grid",
+            gridTemplateColumns: mob ? "1fr" : "1.65fr 1fr", gap:SP[4], alignItems:"start",
+          }}>
+            <Surface color={theme.c0} variants={rise}>
+              <SectionHeader title="Campanhas" accent={theme.c0}
+                sub="Ordenadas por volume de entrada · clique para abrir o funil"
+                right={<Badge color={theme.c0}>ManyChat</Badge>}/>
+              {ranked.map((c, i) => (
+                <CampaignRow key={c.key} rank={i + 1} name={c.key} info={c.info}
+                  leads={c.leads} conv={c.conv} convRate={c.rate} color={c.color}
+                  onClick={() => onSelect(c.key)} isLast={i === ranked.length - 1}/>
+              ))}
+            </Surface>
+
+            <Surface color={theme.c0} variants={rise}>
+              <SectionHeader title="Participação na base" accent={theme.c0}
+                sub="Peso de cada campanha no volume acumulado"/>
+              <div style={{ padding:SP[5] }}>
+                <DonutChart
+                  labels={camps.map(c => c.key)}
+                  values={camps.map(c => c.leads)}
+                  colors={camps.map(c => c.color)}
+                  totalLabel="entradas"/>
+              </div>
+            </Surface>
+          </motion.section>
+
+          {/* Pontos de atenção */}
+          <Surface color={theme.c0} variants={rise}>
+            <SectionHeader title="Pontos de atenção" accent={theme.c0}
+              sub="Maior queda entre etapas consecutivas de cada funil"/>
+            {attention.map((c, i) => (
+              <AttentionRow key={c.key} name={c.key} info={c.info} drop={c.drop} color={c.color}
+                onClick={() => onSelect(c.key)} isLast={i === attention.length - 1}/>
+            ))}
+          </Surface>
+
+          {/* Funis por automação */}
+          <Surface color={theme.c0} variants={rise}>
+            <SectionHeader title="Desempenho do funil por automação" accent={theme.c0}
+              sub="Volume acumulado em cada etapa, sem recorte de período"/>
+            <div style={{
+              padding:SP[5], display:"grid",
+              gridTemplateColumns: mob ? "1fr" : "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: mob ? SP[6] : SP[7],
+            }}>
+              {camps.map((c) => (
+                <article key={c.key}>
+                  <div style={{ display:"flex", alignItems:"center", gap:SP[2], marginBottom:SP[3] }}>
+                    <IconBox icon={c.info.icon} color={c.color} size={22}/>
+                    <span style={{ ...T.body, fontSize:11.5, fontWeight:600, color:D.t0,
+                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.key}</span>
+                  </div>
+                  <FunnelBars campKey={c.key} info={c.info} M={M} color={c.color}
+                    height={Math.max(120, c.info.etapas.length * 34)} compact/>
+                </article>
+              ))}
+            </div>
+          </Surface>
+
+          {/* Taxas de conversão */}
+          <Surface color={theme.c0} variants={rise}>
+            <SectionHeader title="Taxas de conversão" accent={theme.c0}
+              sub="Percentual do volume de entrada que alcançou cada etapa"/>
+            <div style={{
+              padding:SP[5], display:"grid",
+              gridTemplateColumns: mob ? "1fr" : "repeat(auto-fit, minmax(300px, 1fr))",
+              gap: mob ? SP[5] : SP[6],
+            }}>
+              {camps.map((c) => {
+                const stages = getStages(c.info, M);
+                return (
+                  <article key={c.key}>
+                    <div style={{ display:"flex", alignItems:"center", gap:SP[2], marginBottom:SP[3] }}>
+                      <span aria-hidden="true" style={{
+                        width:6, height:6, borderRadius:"50%", background:c.color, flexShrink:0,
+                        boxShadow:`0 0 5px ${gl(c.color, 0.35)}`,
+                      }}/>
+                      <span style={{ ...T.body, fontSize:11.5, fontWeight:600, color:D.t0,
+                        overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.key}</span>
+                    </div>
+                    <div>
+                      {stages.slice(1).map((s, i) => {
+                        const r = s.pctTop ?? 0;
+                        const clr = rateColor(r, D, c.color);
+                        return (
+                          <div key={s.name} style={{
+                            display:"flex", alignItems:"center", gap:SP[3], padding:"7px 0",
+                            borderBottom: i < stages.length - 2 ? `1px solid ${D.bdr}` : "none",
+                          }}>
+                            <span style={{ ...T.small, fontSize:10.5, color:D.t1,
+                              flex:"0 0 120px", lineHeight:1.35,
+                              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                              Entrada → {s.name}
+                            </span>
+                            <span style={{ flex:1, minWidth:40 }}>
+                              <Meter value={r} color={clr} delay={i * 110} height={5}/>
+                            </span>
+                            <span style={{ ...T.mono, fontSize:10.5, fontWeight:600, color:clr,
+                              width:46, textAlign:"right" }}>{fmtRate(r)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </Surface>
+        </>
+      )}
+    </motion.div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   12. DETALHE DA CAMPANHA
+   ═════════════════════════════════════════════════════════════════════════ */
+
+function FunnelDetail({ campKey, info, M, color, onBack }) {
+  const D = useD();
+  const mob = useIsMobile();
+  const stages = useMemo(() => getStages(info, M), [info, M]);
+  const drop = useMemo(() => getBiggestDrop(info, M), [info, M]);
+  const top = stages[0]?.value ?? 0;
+  const last = stages[stages.length - 1]?.value ?? 0;
+  const finalRate = safePct(top, last);
+  const finalClr = rateColor(finalRate, D, color);
+  const cls = classifyDrop(drop?.lossRate, D);
+  const hasData = top > 0;
+
+  return (
+    <motion.div
+      variants={stagger}
+      initial="hidden"
+      animate="show"
+      style={{ display:"flex", flexDirection:"column", gap: mob ? SP[5] : SP[6] }}>
+
+      <motion.header variants={rise} style={{ display:"flex", alignItems:"center", gap:SP[3] }}>
+        <motion.button type="button" onClick={onBack} className="zf-focus"
+          aria-label="Voltar para a visão geral"
+          whileHover={{ background: gl(color, 0.17), x:-2 }}
+          whileTap={{ scale:0.94 }}
+          transition={MOVE.hover}
+          style={{
+            width:36, height:36, borderRadius:R.md, flexShrink:0,
+            background:gl(color, 0.09), border:`1px solid ${gl(color, 0.2)}`,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            color, cursor:"pointer", fontSize:16,
+          }}>
+          <i className="ti ti-arrow-left" aria-hidden="true"/>
+        </motion.button>
+        <IconBox icon={info.icon} color={color} size={36}/>
+        <div style={{ minWidth:0 }}>
+          <h1 style={{ ...T.h1, fontSize: mob ? 17 : 20, color:D.t0, margin:0,
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{campKey}</h1>
+          <p style={{ ...T.small, color:D.t2, margin:"2px 0 0" }}>Desempenho acumulado do funil</p>
         </div>
-      </Panel>
+      </motion.header>
+
+      {!hasData && (
+        <Surface hoverable={false} variants={rise} style={{ padding:SP[6] }}>
+          <EmptyBlock icon="ti-inbox"
+            text="Esta automação ainda não registrou entradas. Os dados aparecem assim que o primeiro contato percorrer o fluxo."/>
+        </Surface>
+      )}
+
+      {hasData && (
+        <>
+          {/* Etapas */}
+          <motion.section variants={stagger} aria-label="Etapas do funil" style={{
+            display:"grid",
+            gridTemplateColumns: mob ? "1fr 1fr" : `repeat(${Math.min(stages.length, 5)}, minmax(0,1fr))`,
+            gap:SP[3],
+          }}>
+            {stages.map((s, i) => (
+              <Surface key={s.name} color={color} variants={rise} style={{
+                padding:`${SP[4]}px ${SP[5]}px`,
+                background: i === 0 ? gl(color, 0.06) : D.surface,
+                borderColor: i === 0 ? gl(color, 0.24) : D.bdr,
+                position:"relative",
+              }}>
+                {i === 0 && (
+                  <span aria-hidden="true" style={{
+                    position:"absolute", top:0, left:0, right:0, height:2,
+                    background:`linear-gradient(90deg, ${color}, ${gl(color, 0)})`,
+                  }}/>
+                )}
+                <Eyebrow color={i === 0 ? gl(color, 0.9) : D.t2}>{s.name}</Eyebrow>
+                <div style={{ ...T.metric, fontSize:26, color:D.t0, margin:`${SP[3]}px 0 ${SP[3]}px` }}>
+                  <AnimatedNumber value={s.value} delay={i * 90}/>
+                </div>
+                {i === 0
+                  ? <Badge color={color}>Volume de entrada</Badge>
+                  : <Badge color={rateColor(s.pctTop ?? 0, D, color)}>
+                      {s.pctTop !== null ? `${s.pctTop.toFixed(1)}% da entrada` : "—"}
+                    </Badge>}
+              </Surface>
+            ))}
+          </motion.section>
+
+          <motion.section variants={stagger} style={{
+            display:"grid",
+            gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap:SP[4], alignItems:"start",
+          }}>
+            {/* Funil */}
+            <Surface color={color} variants={rise}>
+              <SectionHeader title="Desempenho do funil" accent={color}
+                sub="Redução de volume entre etapas"/>
+              <div style={{ padding:`${SP[5]}px ${SP[4]}px ${SP[5]}px ${SP[3]}px` }}>
+                <FunnelBars campKey={campKey} info={info} M={M} color={color}
+                  height={Math.max(150, stages.length * 42)}/>
+              </div>
+            </Surface>
+
+            {/* Conversão entre etapas */}
+            <Surface color={color} variants={rise}>
+              <SectionHeader title="Conversão entre etapas" accent={color}
+                sub="Comparação com a etapa anterior e com o volume de entrada"/>
+              <div style={{ padding:`${SP[2]}px ${SP[5]}px ${SP[4]}px` }}>
+                {stages.slice(1).map((s, i) => {
+                  const prevRate = s.pctPrev ?? 0;
+                  const clr = rateColor(prevRate, D, color);
+                  return (
+                    <div key={s.name} style={{
+                      padding:`${SP[3]}px 0`,
+                      borderBottom: i < stages.length - 2 ? `1px solid ${D.bdr}` : "none",
+                    }}>
+                      <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between",
+                        gap:SP[3], marginBottom:SP[2] }}>
+                        <span style={{ ...T.small, fontSize:11, color:D.t1, minWidth:0,
+                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {s.previous !== null ? stages[i].name : ""} <span style={{ color:D.t2 }}>→</span> {s.name}
+                        </span>
+                        <span style={{ ...T.metric, fontSize:15, color:clr, flexShrink:0 }}>
+                          {fmtRate(prevRate)}
+                        </span>
+                      </div>
+                      <Meter value={prevRate} color={clr} delay={i * 120} height={5}/>
+                      <div style={{ display:"flex", justifyContent:"space-between", gap:SP[3], marginTop:SP[2] }}>
+                        <span style={{ ...T.mono, fontSize:9.5, color:D.t2 }}>
+                          Perda: {fmtNum(s.lost)}
+                        </span>
+                        <span style={{ ...T.mono, fontSize:9.5, color:D.t2 }}>
+                          {s.pctTop !== null ? `${s.pctTop.toFixed(1)}% da entrada` : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Surface>
+          </motion.section>
+
+          <motion.section variants={stagger} style={{
+            display:"grid",
+            gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap:SP[4],
+          }}>
+            {/* Maior queda */}
+            <Surface color={cls.color} variants={rise} style={{
+              padding:`${SP[5]}px`, position:"relative",
+              background:D.surface, borderColor:gl(cls.color, 0.2),
+            }}>
+              <span aria-hidden="true" style={{
+                position:"absolute", top:0, left:0, right:0, height:2,
+                background:`linear-gradient(90deg, ${cls.color}, ${gl(cls.color, 0)})`,
+              }}/>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:SP[3] }}>
+                <Eyebrow color={D.t2}>Maior queda entre etapas</Eyebrow>
+                <Badge color={cls.color}>{cls.label}</Badge>
+              </div>
+              {drop ? (
+                <>
+                  <div style={{ ...T.metric, fontSize: mob ? 34 : 40, color:cls.color, margin:`${SP[4]}px 0 ${SP[3]}px` }}>
+                    <AnimatedNumber value={drop.lossRate} duration={1000} format={(n) => `${clamp(n, 0, 100).toFixed(1)}%`}/>
+                  </div>
+                  <p style={{ ...T.body, color:D.t1, margin:0 }}>
+                    Entre <strong style={{ color:D.t0, fontWeight:600 }}>{drop.from}</strong> e{" "}
+                    <strong style={{ color:D.t0, fontWeight:600 }}>{drop.to}</strong>,{" "}
+                    <strong style={{ color:D.t0, fontWeight:600 }}>{fmtNum(drop.lost)}</strong> contatos não avançaram
+                    ({fmtNum(drop.previous)} → {fmtNum(drop.current)}).
+                  </p>
+                </>
+              ) : (
+                <p style={{ ...T.body, color:D.t1, margin:`${SP[4]}px 0 0` }}>
+                  Ainda não há volume suficiente entre as etapas para avaliar quedas.
+                </p>
+              )}
+            </Surface>
+
+            {/* Conversão final */}
+            <Surface color={color} variants={rise} style={{
+              padding:SP[5], position:"relative",
+              background:gl(color, 0.05), borderColor:gl(color, 0.2),
+            }}>
+              <span aria-hidden="true" style={{
+                position:"absolute", top:0, left:0, right:0, height:2,
+                background:`linear-gradient(90deg, ${color}, ${gl(color, 0)})`,
+              }}/>
+              <Eyebrow color={gl(color, 0.85)}>Conversão final acumulada</Eyebrow>
+              <div style={{ ...T.metric, fontSize: mob ? 34 : 40, color:finalClr, margin:`${SP[4]}px 0 ${SP[3]}px` }}>
+                <AnimatedNumber value={finalRate} duration={1000} format={(n) => `${clamp(n, 0, 100).toFixed(1)}%`}/>
+              </div>
+              <p style={{ ...T.body, color:D.t1, margin:0 }}>
+                <strong style={{ color:D.t0, fontWeight:600 }}>{fmtNum(top)}</strong> entraram no fluxo ·{" "}
+                <strong style={{ color:D.t0, fontWeight:600 }}>{fmtNum(last)}</strong> chegaram a{" "}
+                {info.etapas[info.etapas.length - 1]}.
+              </p>
+              <div style={{ marginTop:SP[4] }}>
+                <Meter value={finalRate} color={finalClr} height={6} delay={200}/>
+              </div>
+            </Surface>
+          </motion.section>
+        </>
+      )}
+    </motion.div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   13. NAVEGAÇÃO
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* O marcador do item ativo é um layoutId: ele não some e reaparece, ele
+   escorrega de um item para o outro. */
+function NavItem({ icon, label, count, active, onClick, color }) {
+  const D = useD();
+  return (
+    <li>
+      <motion.button type="button" onClick={onClick} className="zf-focus"
+        initial={false}
+        animate={{
+          backgroundColor: active ? gl(color, 0.09) : "rgba(0,0,0,0)",
+          color: active ? D.t0 : D.t1,
+        }}
+        whileHover={active ? {} : { backgroundColor: D.surfaceAlt, color: D.t0, x:1 }}
+        whileTap={{ scale:0.98 }}
+        transition={MOVE.hover}
+        aria-current={active ? "page" : undefined}
+        style={{
+          position:"relative", display:"flex", alignItems:"center", gap:SP[3],
+          width:"100%", minHeight:38, padding:"9px 12px 9px 13px", borderRadius:R.sm,
+          fontFamily:F.b, fontSize:12.5, fontWeight: active ? 600 : 450,
+          border:"1px solid transparent", cursor:"pointer", textAlign:"left",
+        }}>
+        {active && (
+          <motion.span
+            layoutId="nav-marker"
+            aria-hidden="true"
+            transition={MOVE.swap}
+            style={{
+              position:"absolute", left:0, top:8, bottom:8, width:2.5,
+              borderRadius:R.pill, background:color,
+              boxShadow:`0 0 8px ${gl(color, 0.5)}`,
+            }}/>
+        )}
+        <i className={`ti ${icon}`} aria-hidden="true" style={{
+          fontSize:15.5, flexShrink:0, color: active ? color : "inherit",
+        }}/>
+        <span style={{ flex:1, minWidth:0, overflow:"hidden",
+          textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{label}</span>
+        {count !== null && count !== undefined && (
+          <span style={{
+            ...T.mono, fontSize:9.5, fontWeight:600,
+            color: active ? gl(color, 0.95) : D.t2,
+            background: active ? gl(color, 0.12) : D.track,
+            padding:"2px 7px", borderRadius:R.pill, flexShrink:0,
+          }}>{count}</span>
+        )}
+      </motion.button>
+    </li>
+  );
+}
+
+function NavGroup({ label, children }) {
+  const D = useD();
+  return (
+    <div style={{ padding:`${SP[4]}px ${SP[3]}px ${SP[1]}px` }}>
+      <div style={{ ...T.eyebrow, fontSize:8.5, color:D.t2, padding:`0 ${SP[3]}px ${SP[2]}px` }}>{label}</div>
+      <ul style={{ listStyle:"none", margin:0, padding:0, display:"flex",
+        flexDirection:"column", gap:2 }}>{children}</ul>
     </div>
   );
 }
 
-// ─── SIDEBAR ITEM ─────────────────────────────────────────────────────────────
-function SidebarItem({ icon, label, count, active, onClick, color }) {
+function Sidebar({ theme, camps, M, sel, setSel, mob, closeSide, colors, timeStr, loading, reload }) {
   const D = useD();
-  const [hov, setHov] = useState(false);
+
+  // No mobile a sidebar é uma gaveta: entra e sai de verdade (desmonta),
+  // então não fica um menu invisível capturando o Tab.
+  const drawer = mob
+    ? {
+        initial: { x:"-100%" },
+        animate: { x:0 },
+        exit:    { x:"-100%" },
+        transition: { type:"spring", stiffness:320, damping:36 },
+      }
+    : {};
+
   return (
-    <button onClick={onClick} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
-      className="zf-focus"
-      style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",
-        width:"calc(100% - 16px)",margin:"0 8px 2px",borderRadius:10,
-        fontSize:12,fontWeight:active?600:450,
-        color:active?D.t0:hov?D.t0:D.t1,
-        background:active?gl(color,0.12):hov?gl(color,0.05):"transparent",
-        border:`1px solid ${active?gl(color,0.22):"transparent"}`,
-        cursor:"pointer",transition:"all .15s",
-        textAlign:"left",fontFamily:F.b}}>
-      <i className={`ti ${icon}`} style={{fontSize:15,flexShrink:0,
-        color:active?color:"inherit",
-        filter:active?`drop-shadow(0 0 4px ${gl(color,0.3)})`:"none"}}/>
-      <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
-      {count&&(
-        <span style={{fontSize:9,fontFamily:F.m,fontWeight:600,
-          color:active?gl(color,0.95):D.t2,
-          background:active?gl(color,0.14):gl("#888",0.1),
-          padding:"2px 7px",borderRadius:20,fontVariantNumeric:"tabular-nums"}}>{count}</span>
-      )}
-    </button>
+    <motion.nav aria-label="Navegação do cliente" {...drawer} style={{
+      width:236, flexShrink:0, background:D.surface,
+      borderRight:`1px solid ${D.bdr}`, display:"flex", flexDirection:"column",
+      ...(mob
+        ? { position:"fixed", top:0, left:0, bottom:0, zIndex:90, boxShadow:D.sh3 }
+        : { position:"sticky", top:TOPBAR_H, height:`calc(100vh - ${TOPBAR_H}px)`, overflow:"hidden auto" }),
+    }}>
+      {/* Identidade do cliente */}
+      <div style={{ padding:`${SP[4]}px ${SP[4]}px ${SP[3]}px` }}>
+        <div style={{
+          display:"flex", alignItems:"center", gap:SP[3],
+          background:`linear-gradient(135deg, ${gl(theme.c0, 0.1)}, ${gl(theme.c3, 0.04)})`,
+          border:`1px solid ${gl(theme.c0, 0.18)}`,
+          borderRadius:R.md, padding:`${SP[3]}px ${SP[3]}px`,
+        }}>
+          <span aria-hidden="true" style={{
+            width:32, height:32, borderRadius:R.sm, flexShrink:0,
+            background:`linear-gradient(140deg, ${theme.c0}, ${theme.c3})`,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:14, fontWeight:700, color:"#fff", fontFamily:F.h,
+          }}>{theme.avatar}</span>
+          <div style={{ minWidth:0 }}>
+            <div style={{ ...T.body, fontFamily:F.h, fontSize:12.5, fontWeight:700, color:D.t0,
+              letterSpacing:"-0.012em", overflow:"hidden", textOverflow:"ellipsis",
+              whiteSpace:"nowrap" }}>{theme.name}</div>
+            <div style={{ ...T.eyebrow, fontSize:8, color:D.t2, marginTop:2 }}>Cliente ativo</div>
+          </div>
+        </div>
+      </div>
+
+      <Divider/>
+
+      {/* O LayoutGroup mantém o marcador contínuo entre os dois grupos */}
+      <LayoutGroup id="sidebar">
+        <NavGroup label="Painel">
+          <NavItem icon="ti-layout-dashboard" label="Visão geral" color={theme.c0}
+            active={sel === "overview"}
+            onClick={() => { setSel("overview"); if (mob) closeSide(); }}/>
+        </NavGroup>
+
+        <Divider/>
+
+        <NavGroup label="Campanhas">
+          {camps.map(([key, info], i) => {
+            const count = M[info.cols[0]] ?? 0;
+            return (
+              <NavItem key={key} icon={info.icon}
+                label={key}
+                count={count > 0 ? fmtNum(count) : null}
+                color={colors[i % colors.length]}
+                active={sel === key}
+                onClick={() => { setSel(key); if (mob) closeSide(); }}/>
+            );
+          })}
+        </NavGroup>
+      </LayoutGroup>
+
+      {/* Rodapé: sincronização */}
+      <div style={{ marginTop:"auto", padding:SP[4], borderTop:`1px solid ${D.bdr}` }}>
+        <div style={{ ...T.mono, fontSize:9.5, color:D.t2, marginBottom:SP[3],
+          display:"flex", alignItems:"center", gap:6 }}>
+          <span className={loading ? "" : "zf-live"} aria-hidden="true" style={{
+            width:6, height:6, borderRadius:"50%", flexShrink:0,
+            background: loading ? D.warn : timeStr ? D.ok : D.t2,
+          }}/>
+          {loading ? "Sincronizando…" : timeStr ? `Última sincronização · ${timeStr}` : "Aguardando dados"}
+        </div>
+        <motion.button type="button" onClick={reload} disabled={loading} className="zf-focus"
+          whileHover={loading ? {} : { backgroundColor:D.surfaceAlt, color:D.t0 }}
+          whileTap={loading ? {} : { scale:0.98 }}
+          animate={{ color: loading ? D.t2 : D.t1 }}
+          transition={MOVE.hover}
+          style={{
+            display:"flex", alignItems:"center", justifyContent:"center", gap:7, width:"100%",
+            minHeight:38, ...T.mono, fontSize:10.5, fontWeight:600,
+            backgroundColor:"rgba(0,0,0,0)", border:`1px solid ${D.bdr2}`, borderRadius:R.sm,
+            cursor: loading ? "default" : "pointer",
+          }}>
+          <i className={`ti ti-refresh${loading ? " spinning" : ""}`} style={{ fontSize:13 }} aria-hidden="true"/>
+          {loading ? "Sincronizando" : "Sincronizar agora"}
+        </motion.button>
+      </div>
+    </motion.nav>
   );
 }
 
-// ─── ECOSYSTEM PAGE ───────────────────────────────────────────────────────────
-function EcosystemPage({ ecoKey }) {
+/* ═══════════════════════════════════════════════════════════════════════════
+   14. TOPBAR
+   ═════════════════════════════════════════════════════════════════════════ */
+
+function ThemeToggle({ mode, onChange }) {
+  const isDark = mode === "dark";
+  return (
+    <motion.button type="button" onClick={() => onChange(isDark ? "light" : "dark")}
+      className="zf-focus"
+      whileTap={{ scale:0.93 }}
+      title={isDark ? "Usar modo claro" : "Usar modo escuro"}
+      aria-label={isDark ? "Usar modo claro" : "Usar modo escuro"}
+      aria-pressed={isDark}
+      animate={{
+        backgroundColor: isDark ? "#1C1C24" : "#E7E6EE",
+        borderColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(17,17,26,0.14)",
+      }}
+      transition={{ duration:0.25, ease:EASE }}
+      style={{
+        width:46, height:26, borderRadius:R.pill, padding:0, position:"relative", flexShrink:0,
+        borderWidth:1, borderStyle:"solid", cursor:"pointer",
+      }}>
+      <motion.i className="ti ti-sun" aria-hidden="true"
+        animate={{ color: isDark ? "rgba(255,255,255,0.22)" : "#6E5FC8" }}
+        transition={{ duration:0.25 }}
+        style={{ position:"absolute", left:7, top:"50%", y:"-50%", fontSize:10 }}/>
+      <motion.i className="ti ti-moon" aria-hidden="true"
+        animate={{ color: isDark ? "#A78BFA" : "rgba(17,17,26,0.2)" }}
+        transition={{ duration:0.25 }}
+        style={{ position:"absolute", right:7, top:"50%", y:"-50%", fontSize:10 }}/>
+      <motion.span aria-hidden="true"
+        animate={{ left: isDark ? 22 : 2, backgroundColor: isDark ? "#A78BFA" : "#6E5FC8" }}
+        transition={MOVE.swap}
+        style={{
+          position:"absolute", top:2, width:20, height:20, borderRadius:"50%",
+          boxShadow:"0 1px 4px rgba(0,0,0,0.28)",
+        }}/>
+    </motion.button>
+  );
+}
+
+/* A pílula do cliente agora vive dentro do botão ativo. O Motion interpola a
+   posição sozinho (layoutId) — some o cálculo de `left: calc(...)`. */
+function ClientSwitcher({ tab, setTab, mob }) {
   const D = useD();
   const mode = useTheme();
+  const n = TABS.length;
+  const activeTheme = THEMES[TABS[tab].ecoKey];
+
+  const onKey = (e) => {
+    if (e.key === "ArrowRight") { e.preventDefault(); setTab((tab + 1) % n); }
+    if (e.key === "ArrowLeft")  { e.preventDefault(); setTab((tab + n - 1) % n); }
+  };
+
+  return (
+    <div role="tablist" aria-label="Selecionar cliente" onKeyDown={onKey} style={{
+      display:"grid", gridTemplateColumns:`repeat(${n}, 1fr)`, position:"relative",
+      padding:3, borderRadius:R.md, minWidth: mob ? 0 : 300,
+      background: mode === "dark" ? "rgba(255,255,255,0.035)" : "rgba(17,17,26,0.04)",
+      border:`1px solid ${D.bdr}`,
+    }}>
+      {TABS.map((t, i) => {
+        const active = i === tab;
+        const th = THEMES[t.ecoKey];
+        return (
+          <motion.button key={t.ecoKey} type="button" role="tab" aria-selected={active}
+            tabIndex={active ? 0 : -1} onClick={() => setTab(i)}
+            className="zf-focus" title={t.label}
+            whileTap={{ scale:0.97 }}
+            animate={{ color: active ? D.t0 : D.t1 }}
+            whileHover={active ? {} : { color: D.t0 }}
+            transition={MOVE.hover}
+            style={{
+              position:"relative", display:"flex", alignItems:"center",
+              justifyContent:"center", gap:7, minHeight:32,
+              fontFamily:F.b, fontSize: mob ? 11 : 11.5, fontWeight: active ? 600 : 450,
+              background:"transparent", border:"none", borderRadius:R.xs,
+              padding: mob ? "5px 8px" : "5px 12px",
+              cursor:"pointer", whiteSpace:"nowrap",
+            }}>
+            {active && (
+              <motion.span
+                layoutId="client-pill"
+                aria-hidden="true"
+                transition={MOVE.swap}
+                style={{
+                  position:"absolute", inset:0, borderRadius:R.xs,
+                  background: mode === "dark" ? "rgba(255,255,255,0.07)" : "#FFFFFF",
+                  border:`1px solid ${gl(activeTheme.c0, 0.22)}`,
+                  boxShadow: mode === "dark" ? `0 0 12px ${gl(activeTheme.c0, 0.1)}` : D.sh1,
+                }}/>
+            )}
+            <motion.span aria-hidden="true"
+              animate={{
+                opacity: active ? 1 : 0.5,
+                scale: active ? 1 : 0.85,
+                boxShadow: active ? `0 0 6px ${gl(th.c0, 0.55)}` : `0 0 0px ${gl(th.c0, 0)}`,
+              }}
+              transition={MOVE.hover}
+              style={{
+                position:"relative", width:6, height:6, borderRadius:"50%",
+                flexShrink:0, background:th.c0,
+              }}/>
+            <span style={{ position:"relative" }}>{mob ? t.short : t.label}</span>
+          </motion.button>
+        );
+      })}
+    </div>
+  );
+}
+
+function StatusPill({ loading, error, timeStr }) {
+  const D = useD();
+  const state = error
+    ? { key:"err", color:D.err, label:"Integração com erro", live:false }
+    : loading
+      ? { key:"load", color:D.warn, label:"Sincronizando", live:false }
+      : { key:"ok", color:D.ok, label: timeStr ? `Sincronizado · ${timeStr}` : "Conectado", live:true };
+
+  return (
+    <span title="Status da integração ManyChat · Google Sheets" style={{
+      display:"inline-flex", alignItems:"center", gap:7,
+      padding:"5px 11px", borderRadius:R.pill,
+      background:D.surfaceAlt, border:`1px solid ${D.bdr}`,
+      ...T.mono, fontSize:10, color:D.t1, whiteSpace:"nowrap",
+    }}>
+      <motion.span className={state.live ? "zf-live" : ""} aria-hidden="true"
+        animate={{ backgroundColor: state.color }}
+        transition={{ duration:0.3 }}
+        style={{ width:6, height:6, borderRadius:"50%", flexShrink:0 }}/>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span key={state.label}
+          initial={{ opacity:0, y:3 }}
+          animate={{ opacity:1, y:0 }}
+          exit={{ opacity:0, y:-3 }}
+          transition={{ duration:0.16 }}>
+          {state.label}
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   15. PÁGINA DO ECOSSISTEMA
+   ═════════════════════════════════════════════════════════════════════════ */
+
+function EcosystemPage({ ecoKey, onStatus }) {
+  const D = useD();
+  const mode = useTheme();
+  const mob = useIsMobile();
+  const reduce = useReducedMotion();
   const theme = THEMES[ecoKey];
+
   const { rows, boolCols, error, loading, lastSync, reload } = useData(URLS[ecoKey]);
   const [sel, setSel] = useState("overview");
   const [sideOpen, setSideOpen] = useState(false);
-  const mob = useIsMobile();
-  const M = useMemo(()=>(!rows||!boolCols)?{}:buildMetrics(rows,boolCols),[rows,boolCols]);
-  const camps = Object.entries(CAMPANHAS[ecoKey]);
-  const colors = [theme.c0, theme.c1, theme.c2, theme.c3];
-  const timeStr = lastSync?.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-  const selColor = (sel==="overview"||!CAMPANHAS[ecoKey][sel])
-    ? theme.c0
-    : colors[camps.findIndex(([k])=>k===sel)%colors.length] ?? theme.c0;
 
-  // Volta ao topo ao navegar entre Dashboard e detalhe (evita entrar no meio da página)
+  const M = useMemo(() => (!rows || !boolCols ? {} : buildMetrics(rows, boolCols)), [rows, boolCols]);
+  const camps = useMemo(() => Object.entries(CAMPANHAS[ecoKey]), [ecoKey]);
+  const colors = useMemo(() => [theme.c0, theme.c1, theme.c2, theme.c3], [theme]);
+  const timeStr = lastSync?.toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" });
+
+  const selIndex = camps.findIndex(([k]) => k === sel);
+  const selColor = sel === "overview" || selIndex < 0
+    ? theme.c0
+    : colors[selIndex % colors.length] ?? theme.c0;
+
+  const closeSide = useCallback(() => setSideOpen(false), []);
+
+  /* Luz de fundo que segue o cursor. O ponteiro alimenta dois motion values,
+     que passam por uma mola: o halo tem inércia em vez de colar no mouse.
+     Nada disso re-renderiza o React. */
+  const mx = useMotionValue(0);
+  const my = useMotionValue(0);
+  const sx = useSpring(mx, { stiffness:110, damping:24, mass:0.6 });
+  const sy = useSpring(my, { stiffness:110, damping:24, mass:0.6 });
+  const glowOpacity = useMotionValue(0);
+
+  const cursorColor = gl(selColor, mode === "dark" ? 0.11 : 0.07);
+  const glowColor = useMotionValue(cursorColor);
+  useEffect(() => {
+    const controls = animate(glowColor, cursorColor, { duration:0.5, ease:EASE });
+    return () => controls.stop();
+  }, [cursorColor, glowColor]);
+
+  const glowBg = useMotionTemplate`radial-gradient(520px circle at ${sx}px ${sy}px, ${glowColor} 0%, transparent 62%)`;
+
+  const handlePointer = useCallback((e) => {
+    if (reduce) return;
+    mx.set(e.clientX);
+    my.set(e.clientY - TOPBAR_H);
+    animate(glowOpacity, 1, { duration:0.4 });
+  }, [reduce, mx, my, glowOpacity]);
+
+  const handlePointerLeave = useCallback(() => {
+    animate(glowOpacity, 0, { duration:0.5 });
+  }, [glowOpacity]);
+
+  // Reporta status da integração para a topbar
+  useEffect(() => { onStatus({ loading, error, timeStr }); }, [loading, error, timeStr, onStatus]);
+
+  // Volta ao topo ao trocar de página
   const scrollRef = useRef(null);
   useEffect(() => { scrollRef.current?.scrollTo({ top:0 }); }, [sel]);
 
-  // Esc fecha a sidebar no mobile
+  // Esc fecha a gaveta
   useEffect(() => {
     if (!sideOpen) return;
     const fn = (e) => { if (e.key === "Escape") setSideOpen(false); };
@@ -835,355 +1757,484 @@ function EcosystemPage({ ecoKey }) {
     return () => window.removeEventListener("keydown", fn);
   }, [sideOpen]);
 
-  return (
-    <div style={{display:"flex",flex:1,minHeight:0}}>
-      {mob&&sideOpen&&(
-        <div onClick={()=>setSideOpen(false)}
-          style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",
-            backdropFilter:"blur(2px)",zIndex:80}}/>
-      )}
+  const activeInfo = CAMPANHAS[ecoKey][sel];
 
-      <nav style={{
-        width:230,flexShrink:0,background:D.bg1,
-        borderRight:`1px solid ${D.bdr}`,display:"flex",flexDirection:"column",
-        ...(mob?{position:"fixed",top:0,left:0,bottom:0,zIndex:90,
-          transform:sideOpen?"translateX(0)":"translateX(-100%)",
-          transition:"transform 0.25s cubic-bezier(.4,0,.2,1)",
-          boxShadow:sideOpen?`8px 0 32px ${D.shadow}`:"none"}:
-          {position:"sticky",top:58,height:"calc(100vh - 58px)",overflow:"hidden auto"})
-      }}>
-        <div style={{padding:"18px 16px 14px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:11,
-            background:`linear-gradient(135deg, ${gl(theme.c0,0.12)}, ${gl(theme.c3,0.06)})`,
-            border:`1px solid ${gl(theme.c0,0.22)}`,
-            borderRadius:12,padding:"11px 12px",
-            boxShadow:`inset 0 1px 0 ${gl(theme.c0,0.1)}`}}>
-            <div style={{width:34,height:34,borderRadius:10,flexShrink:0,
-              background:`linear-gradient(135deg,${theme.c0},${theme.c3})`,
-              display:"flex",alignItems:"center",justifyContent:"center",
-              fontSize:15,fontWeight:700,color:"#fff",fontFamily:F.h,
-              boxShadow:`0 0 9px ${gl(theme.c0,0.25)}`}}>{theme.avatar}</div>
-            <div style={{minWidth:0}}>
-              <div style={{fontSize:12,fontWeight:700,color:D.t0,fontFamily:F.h,
-                letterSpacing:"-0.01em",overflow:"hidden",textOverflow:"ellipsis",
-                whiteSpace:"nowrap"}}>{theme.name}</div>
-              <div style={{fontSize:8,color:D.t2,fontFamily:F.m,letterSpacing:"0.09em",marginTop:2}}>WE LOVE · ANALYTICS</div>
-            </div>
-          </div>
-        </div>
-
-        <Divider/>
-        <div style={{padding:"10px 0 6px"}}>
-          <div style={{fontSize:8,fontWeight:600,fontFamily:F.m,letterSpacing:"0.14em",
-            textTransform:"uppercase",color:D.t2,padding:"0 20px 8px"}}>Visão geral</div>
-          <SidebarItem icon="ti-layout-dashboard" label="Dashboard"
-            active={sel==="overview"} onClick={()=>{setSel("overview");if(mob)setSideOpen(false);}}
-            color={theme.c0}/>
-        </div>
-
-        <Divider/>
-        <div style={{padding:"10px 0 6px"}}>
-          <div style={{fontSize:8,fontWeight:600,fontFamily:F.m,letterSpacing:"0.14em",
-            textTransform:"uppercase",color:D.t2,padding:"0 20px 8px"}}>Campanhas</div>
-          {camps.map(([key,info],i)=>{
-            const count=M[info.cols[0]]??0;
-            return (
-              <SidebarItem key={key} icon={info.icon}
-                label={key.length>18?key.slice(0,16)+"…":key}
-                count={count>0?fmtNum(count):null}
-                active={sel===key}
-                onClick={()=>{setSel(key);if(mob)setSideOpen(false);}}
-                color={colors[i%colors.length]}/>
-            );
-          })}
-        </div>
-
-        <div style={{marginTop:"auto",padding:"14px 16px",borderTop:`1px solid ${D.bdr}`}}>
-          {timeStr&&(
-            <div style={{fontSize:9,fontFamily:F.m,color:D.t2,marginBottom:10,
-              display:"flex",alignItems:"center",gap:6}}>
-              <span className="zf-live" style={{width:6,height:6,borderRadius:"50%",
-                background:D.ok,flexShrink:0}}/>
-              Atualizado às {timeStr}
-            </div>
-          )}
-          <button onClick={reload} disabled={loading} className="zf-focus"
-            style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,
-              fontSize:10,fontFamily:F.m,fontWeight:600,
-              color:loading?D.t2:D.t1,background:"transparent",
-              border:`1px solid ${D.bdr}`,borderRadius:10,
-              padding:"9px 0",cursor:loading?"default":"pointer",width:"100%",transition:"all .15s"}}
-            onMouseEnter={e=>{if(!loading)e.currentTarget.style.background=gl(theme.c0,0.07);}}
-            onMouseLeave={e=>{e.currentTarget.style.background="transparent";}}>
-            <i className={`ti ti-refresh${loading?" spinning":""}`} style={{fontSize:13}}/>
-            {loading?"Sincronizando…":"Sincronizar"}
-          </button>
-        </div>
-      </nav>
-
-      <div ref={scrollRef} style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",
-        background:D.bg,overflowX:"hidden",height:"calc(100vh - 58px)",overflowY:"auto",
-        position:"relative"}}>
-
-        {/* Assinatura: glow ambiente na cor do ecossistema/campanha ativa */}
-        <div aria-hidden="true" style={{
-          position:"absolute", top:-180, left:"50%", transform:"translateX(-50%)",
-          width:"min(900px, 120%)", height:480, pointerEvents:"none", zIndex:0,
-          background:`radial-gradient(ellipse at center, ${gl(selColor, mode==="dark"?0.07:0.045)} 0%, transparent 65%)`,
-          transition:"background .5s ease",
-        }}/>
-
-        {mob&&(
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-            padding:"10px 14px",
-            background:mode==="dark"?gl("#0E0E0E",0.85):gl("#FFFFFF",0.85),
-            backdropFilter:"blur(10px)", WebkitBackdropFilter:"blur(10px)",
-            borderBottom:`1px solid ${D.bdr}`,
-            position:"sticky",top:0,zIndex:40,flexShrink:0}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <button onClick={()=>setSideOpen(v=>!v)} aria-label="Abrir menu" className="zf-focus"
-                style={{width:32,height:32,borderRadius:9,background:gl(selColor,0.1),
-                  border:`1px solid ${gl(selColor,0.2)}`,display:"flex",alignItems:"center",
-                  justifyContent:"center",color:selColor,cursor:"pointer",fontSize:15}}>
-                <i className="ti ti-menu-2"/>
-              </button>
-              <span style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}>
-                <span style={{width:7,height:7,borderRadius:"50%",background:selColor,
-                  boxShadow:`0 0 5px ${gl(selColor,0.35)}`,transition:"background .3s"}}/>
-                <span style={{color:D.t0,fontWeight:600,fontFamily:F.h,letterSpacing:"-0.01em"}}>
-                  {sel==="overview"?"Dashboard":sel}</span>
-              </span>
-            </div>
-            {loading&&<span style={{fontSize:9,fontFamily:F.m,color:D.t2}}>Carregando…</span>}
-          </div>
-        )}
-
-        <div style={{padding:mob?"16px 14px":"26px 28px",flex:1,position:"relative",zIndex:1}}>
-          {error&&(
-            <div style={{display:"flex",gap:12,alignItems:"flex-start",padding:"15px 18px",marginBottom:18,
-              background:gl(D.err,0.08),border:`1px solid ${gl(D.err,0.22)}`,
-              borderRadius:14,fontSize:11.5,color:D.err}}>
-              <i className="ti ti-alert-circle" style={{fontSize:16,marginTop:1,flexShrink:0}}/>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:600}}>Não foi possível carregar os dados do Google Sheets.</div>
-                <div style={{fontFamily:F.m,fontSize:9,opacity:0.65,marginTop:3}}>{error}</div>
-              </div>
-              <button onClick={reload} className="zf-focus"
-                style={{flexShrink:0,fontSize:10,fontFamily:F.m,fontWeight:600,color:D.err,
-                  background:gl(D.err,0.1),border:`1px solid ${gl(D.err,0.3)}`,
-                  borderRadius:9,padding:"7px 14px",cursor:"pointer",transition:"background .15s"}}
-                onMouseEnter={e=>{e.currentTarget.style.background=gl(D.err,0.18);}}
-                onMouseLeave={e=>{e.currentTarget.style.background=gl(D.err,0.1);}}>
-                Tentar novamente
-              </button>
-            </div>
-          )}
-          {loading&&!error&&<LoadingSkeleton mob={mob}/>}
-          {!loading&&!error&&rows&&(
-            <div key={sel} className="zf-page">
-              {sel==="overview"||!CAMPANHAS[ecoKey][sel]
-                ?<Overview ecoKey={ecoKey} M={M} theme={theme} onSelect={setSel} timeStr={timeStr}/>
-                :<FunnelDetail campKey={sel} info={CAMPANHAS[ecoKey][sel]} M={M}
-                    color={colors[camps.findIndex(([k])=>k===sel)%colors.length]??theme.c0}
-                    onBack={()=>setSel("overview")}/>}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── TABS ────────────────────────────────────────────────────────────────────
-const TABS = [
-  { label:"Laise Mesquita", ecoKey:"laise" },
-  { label:"We Love Chile",  ecoKey:"chile" },
-  { label:"We Love Peru",   ecoKey:"peru"  },
-];
-
-// ─── CLIENT SWITCHER (topbar) ────────────────────────────────────────────────
-// Segmented control: o thumb desliza entre os clientes e assume a cor de cada um.
-function ClientSwitcher({ tab, setTab, mob }) {
-  const D = useD();
-  const mode = useTheme();
-  const n = TABS.length;
-  const activeTheme = Object.values(THEMES)[tab];
-
-  const onKey = (e) => {
-    if (e.key === "ArrowRight") { e.preventDefault(); setTab((tab+1)%n); }
-    if (e.key === "ArrowLeft")  { e.preventDefault(); setTab((tab+n-1)%n); }
+  const sidebarProps = {
+    theme, camps, M, sel, setSel, closeSide, colors, timeStr, loading, reload,
   };
 
   return (
-    <div role="tablist" aria-label="Selecionar cliente" onKeyDown={onKey}
-      style={{display:"grid", gridTemplateColumns:`repeat(${n},1fr)`,
-        position:"relative", padding:3, borderRadius:12,
-        background: mode==="dark" ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.05)",
-        border:`1px solid ${D.bdr}`}}>
+    <div style={{ display:"flex", flex:1, minHeight:0 }}>
+      {!mob && <Sidebar {...sidebarProps} mob={false}/>}
 
-      {/* Thumb deslizante — muda de posição e de cor junto */}
-      <div aria-hidden="true" style={{
-        position:"absolute", top:3, bottom:3,
-        width:`calc((100% - 6px) / ${n})`,
-        left:`calc(3px + ${tab} * ((100% - 6px) / ${n}))`,
-        borderRadius:9,
-        background:gl(activeTheme.c0, mode==="dark"?0.11:0.09),
-        border:`1px solid ${gl(activeTheme.c0,0.28)}`,
-        boxShadow:`0 0 10px ${gl(activeTheme.c0,0.12)}, inset 0 1px 0 ${gl(activeTheme.c0,0.1)}`,
-        transition:"left .32s cubic-bezier(.22,.68,.4,1), background .32s, border-color .32s, box-shadow .32s",
-      }}/>
+      <AnimatePresence>
+        {mob && sideOpen && (
+          <>
+            <motion.div key="scrim" onClick={closeSide} aria-hidden="true"
+              initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+              transition={{ duration:0.2 }}
+              style={{
+                position:"fixed", inset:0, background:"rgba(0,0,0,0.55)",
+                backdropFilter:"blur(2px)", zIndex:80,
+              }}/>
+            <Sidebar key="drawer" {...sidebarProps} mob={true}/>
+          </>
+        )}
+      </AnimatePresence>
 
-      {TABS.map((t,i)=>{
-        const active = i===tab;
-        const th = Object.values(THEMES)[i];
-        return (
-          <button key={i} role="tab" aria-selected={active}
-            tabIndex={active?0:-1}
-            onClick={()=>setTab(i)}
-            className="zf-focus"
-            title={t.label}
-            style={{position:"relative", zIndex:1,
-              display:"flex", alignItems:"center", justifyContent:"center", gap:7,
-              fontFamily:F.b, fontSize:mob?10:11.5, fontWeight:active?600:450,
-              color:active?D.t0:D.t1,
-              background:"transparent", border:"none", borderRadius:9,
-              padding:mob?"6px 8px":"6px 14px",
-              cursor:"pointer", transition:"color .2s", whiteSpace:"nowrap"}}
-            onMouseEnter={e=>{if(!active)e.currentTarget.style.color=D.t0;}}
-            onMouseLeave={e=>{if(!active)e.currentTarget.style.color=D.t1;}}>
-            <span style={{width:mob?18:17, height:mob?18:17, borderRadius:5, flexShrink:0,
-              background:`linear-gradient(135deg,${th.c0},${th.c3})`,
-              display:"flex", alignItems:"center", justifyContent:"center",
-              fontSize:9, fontWeight:700, color:"#fff", fontFamily:F.h,
-              opacity:active?1:0.55, transition:"opacity .2s, box-shadow .2s",
-              boxShadow:active?`0 0 6px ${gl(th.c0,0.28)}`:"none"}}>{th.avatar}</span>
-            {!mob && t.label}
-          </button>
-        );
-      })}
+      <main ref={scrollRef}
+        onMouseMove={handlePointer}
+        onMouseLeave={handlePointerLeave}
+        style={{
+          flex:1, minWidth:0, display:"flex", flexDirection:"column",
+          background:D.bg, overflowX:"hidden",
+          height:`calc(100vh - ${TOPBAR_H}px)`, overflowY:"auto", position:"relative",
+        }}>
+
+        {/* Fundo vivo: duas manchas em deriva lenta (CSS, loop infinito barato)
+            + halo que segue o cursor com mola (Motion). */}
+        <div aria-hidden="true" className="zf-bg" style={{
+          position:"fixed", top:TOPBAR_H, left:0, right:0, bottom:0,
+          pointerEvents:"none", zIndex:0, overflow:"hidden",
+          "--c-soft": gl(selColor, mode === "dark" ? 0.075 : 0.05),
+          "--c-faint": gl(selColor, mode === "dark" ? 0.05 : 0.032),
+        }}>
+          <motion.span className="zf-bg-cursor" style={{ background:glowBg, opacity:glowOpacity }}/>
+          <span className="zf-bg-blob zf-bg-blob-a"/>
+          <span className="zf-bg-blob zf-bg-blob-b"/>
+        </div>
+
+        {mob && (
+          <div style={{
+            display:"flex", alignItems:"center", gap:SP[3],
+            padding:`${SP[2]}px ${SP[4]}px`,
+            background: mode === "dark" ? gl("#111114", 0.88) : gl("#FFFFFF", 0.9),
+            backdropFilter:"blur(12px)", WebkitBackdropFilter:"blur(12px)",
+            borderBottom:`1px solid ${D.bdr}`,
+            position:"sticky", top:0, zIndex:40, flexShrink:0,
+          }}>
+            <motion.button type="button" onClick={() => setSideOpen(v => !v)}
+              aria-label="Abrir menu de campanhas" aria-expanded={sideOpen}
+              whileTap={{ scale:0.93 }}
+              className="zf-focus" style={{
+                width:38, height:38, borderRadius:R.sm, flexShrink:0,
+                background:gl(selColor, 0.09), border:`1px solid ${gl(selColor, 0.2)}`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                color:selColor, cursor:"pointer", fontSize:16,
+              }}>
+              <i className="ti ti-menu-2" aria-hidden="true"/>
+            </motion.button>
+            <span style={{ display:"flex", alignItems:"center", gap:7, minWidth:0 }}>
+              <motion.span aria-hidden="true"
+                animate={{ backgroundColor:selColor, boxShadow:`0 0 6px ${gl(selColor, 0.45)}` }}
+                transition={{ duration:0.3 }}
+                style={{ width:6, height:6, borderRadius:"50%", flexShrink:0 }}/>
+              <span style={{ ...T.body, fontFamily:F.h, fontSize:12.5, fontWeight:600, color:D.t0,
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {sel === "overview" ? "Visão geral" : sel}
+              </span>
+            </span>
+          </div>
+        )}
+
+        <div style={{
+          width:"100%", maxWidth:1320, margin:"0 auto",
+          padding: mob ? `${SP[5]}px ${SP[4]}px ${SP[7]}px` : `${SP[7]}px ${SP[7]}px ${SP[8]}px`,
+          flex:1, position:"relative", zIndex:1,
+        }}>
+          {/* Uma única troca de conteúdo: erro, esqueleto ou página.
+              O que sai, sai animado — antes o conteúdo antigo desaparecia seco. */}
+          <AnimatePresence mode="wait" initial={false}>
+            {error ? (
+              <motion.div key="error"
+                initial={{ opacity:0, y:6 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-6 }}
+                transition={MOVE.page}>
+                <ErrorState message={error} onRetry={reload}/>
+              </motion.div>
+            ) : loading ? (
+              <motion.div key="loading"
+                initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+                transition={MOVE.page}>
+                <LoadingSkeleton mob={mob}/>
+              </motion.div>
+            ) : rows ? (
+              <motion.div key={sel}
+                initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-6 }}
+                transition={MOVE.page}>
+                {sel === "overview" || !activeInfo
+                  ? <Overview ecoKey={ecoKey} M={M} theme={theme} onSelect={setSel} timeStr={timeStr}/>
+                  : <FunnelDetail campKey={sel} info={activeInfo} M={M}
+                      color={selColor} onBack={() => setSel("overview")}/>}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+      </main>
     </div>
   );
 }
 
-// ─── ROOT ────────────────────────────────────────────────────────────────────
-export default function App() {
-  const [tab, setTab] = useState(0);
-  const [mode, setMode] = useState(() => localStorage.getItem("zafra-theme") || "dark");
-  const mob = useIsMobile();
-  const D = PALETTES[mode];
-  const activeTheme = Object.values(THEMES)[tab];
+/* ═══════════════════════════════════════════════════════════════════════════
+   16. ABERTURA DA SESSÃO
+   ═════════════════════════════════════════════════════════════════════════ */
 
-  useEffect(() => { localStorage.setItem("zafra-theme", mode); }, [mode]);
+const SPLASH_KEY = "zafra-splash-seen";
+
+// Toca uma única vez por sessão do navegador. Enquanto ela roda, o fetch do
+// Sheets já está em andamento por baixo — a espera vira tempo útil.
+function shouldPlaySplash() {
+  if (reducedMotionNow()) return false;
+  try { return !sessionStorage.getItem(SPLASH_KEY); } catch { return false; }
+}
+
+/* Um único gesto de assinatura: o logo é revelado por uma cortina que se
+   recolhe (não um brilho passando em loop), e o fechamento responde ao
+   carregamento de verdade — o status só vira "Pronto" quando os dados do
+   cliente ativo realmente chegaram. Nada aqui roda para sempre; tudo conta
+   uma história com início, meio e fim, uma única vez. */
+function SplashScreen({ mode, accent, status, onDone }) {
+  const D = PALETTES[mode];
+  const done = useRef(false);
+  const [revealed, setRevealed] = useState(false);
+
+  const finish = useCallback(() => {
+    if (done.current) return;
+    done.current = true;
+    onDone();
+  }, [onDone]);
+
+  // A cortina e o traço precisam de ~1.1s para contar a história inteira.
+  // Isso é o piso: nunca fechamos antes disso, mesmo com dados já prontos.
+  useEffect(() => {
+    try { sessionStorage.setItem(SPLASH_KEY, "1"); } catch { /* storage indisponível */ }
+    const reveal = setTimeout(() => setRevealed(true), 1100);
+    // Rede lenta ou fora do ar: nunca prende a pessoa na tela de abertura.
+    const safety = setTimeout(finish, 4200);
+    window.addEventListener("keydown", finish);
+    window.addEventListener("pointerdown", finish);
+    return () => {
+      clearTimeout(reveal);
+      clearTimeout(safety);
+      window.removeEventListener("keydown", finish);
+      window.removeEventListener("pointerdown", finish);
+    };
+  }, [finish]);
+
+  // Só fecha quando a revelação terminou E o cliente ativo já sincronizou
+  // (ou falhou — nesse caso o próprio app mostra o estado de erro em seguida).
+  useEffect(() => {
+    if (!revealed) return;
+    if (status.loading && !status.error) return;
+    const t = setTimeout(finish, 340);
+    return () => clearTimeout(t);
+  }, [revealed, status.loading, status.error, finish]);
+
+  const connecting = status.loading && !status.error;
+  const label = status.error
+    ? "Não foi possível sincronizar agora"
+    : connecting
+      ? "Conectando aos seus dados"
+      : "Pronto para começar";
+  const icon = status.error ? "ti-alert-triangle" : connecting ? "ti-loader-2" : "ti-check";
+  const iconColor = status.error ? D.err : connecting ? D.t2 : accent;
 
   return (
-    <ThemeCtx.Provider value={mode}>
-      <div style={{display:"flex",flexDirection:"column",minHeight:"100vh",
-        background:D.bg,fontFamily:F.b,color:D.t0,overflowX:"hidden",
-        transition:"background .3s, color .3s"}}>
-        <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;450;500;600;700&family=DM+Mono:wght@400;500&display=swap');
-          @import url('https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css');
-          *{box-sizing:border-box;}
-          html,body,#root{margin:0;padding:0;width:100%;min-height:100%;overflow-x:hidden;}
-          body{background:${D.bg};transition:background .3s;}
-          ::selection{background:${gl(activeTheme.c0,0.3)};}
-          ::-webkit-scrollbar{width:5px;height:5px;}
-          ::-webkit-scrollbar-track{background:transparent;}
-          ::-webkit-scrollbar-thumb{background:${mode==="dark"?"rgba(255,255,255,0.1)":"rgba(0,0,0,0.15)"};border-radius:3px;}
-          ::-webkit-scrollbar-thumb:hover{background:${mode==="dark"?"rgba(255,255,255,0.18)":"rgba(0,0,0,0.25)"};}
+    <motion.div role="status" aria-live="polite" aria-label="Abrindo o painel"
+      initial={{ opacity:0 }}
+      animate={{ opacity:1 }}
+      exit={{ opacity:0, transition:{ duration:0.35, ease:EASE } }}
+      transition={{ duration:0.3, ease:EASE }}
+      style={{
+        position:"fixed", inset:0, zIndex:2000,
+        display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+        gap:SP[6], background:D.bg,
+      }}>
 
-          @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-          .spinning{animation:spin 1s linear infinite;display:inline-block;}
+      {/* Um único halo, na cor do cliente que está prestes a abrir */}
+      <motion.div aria-hidden="true"
+        initial={{ opacity:0 }} animate={{ opacity:1 }}
+        transition={{ duration:1.1, ease:EASE }}
+        style={{
+          position:"absolute", top:"50%", left:"50%", zIndex:0,
+          width:520, height:520, borderRadius:"50%", filter:"blur(90px)",
+          transform:"translate(-50%,-50%)",
+          background:gl(accent, mode === "dark" ? 0.13 : 0.09),
+        }}/>
 
-          /* Cards: lift + glow no hover */
-          .zf-card{transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;}
-          .zf-card:hover{transform:translateY(-2px);
-            box-shadow:0 6px 20px var(--glow), 0 1px 4px ${D.shadow};
-            border-color:var(--bdr-hover) !important;}
-
-          /* Entrada em cascata das seções */
-          @keyframes zfIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-          .zf-in{animation:zfIn .45s cubic-bezier(.22,.68,.4,1) backwards;}
-
-          /* Linhas de tabela entram em cascata (delay inline por linha) */
-          @keyframes zfRow{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
-          .zf-row{animation:zfRow .38s cubic-bezier(.22,.68,.4,1) backwards;}
-
-          /* Transição ao navegar entre Dashboard e detalhe de campanha */
-          @keyframes zfPage{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-          .zf-page{animation:zfPage .32s ease-out backwards;}
-
-          /* Pulso "ao vivo" — dados auto-atualizam a cada 5 min */
-          @keyframes zfPing{0%{transform:scale(1);opacity:.45}70%,100%{transform:scale(2.3);opacity:0}}
-          .zf-live{position:relative;}
-          .zf-live::after{content:"";position:absolute;inset:0;border-radius:50%;
-            background:inherit;animation:zfPing 2.4s cubic-bezier(0,0,.2,1) infinite;}
-
-          /* Skeleton shimmer */
-          @keyframes zfShimmer{from{background-position:200% 0}to{background-position:-200% 0}}
-          .zf-shimmer{
-            background:linear-gradient(90deg,
-              ${mode==="dark"?"rgba(255,255,255,0.05)":"rgba(0,0,0,0.05)"} 25%,
-              ${mode==="dark"?"rgba(255,255,255,0.1)":"rgba(0,0,0,0.09)"} 50%,
-              ${mode==="dark"?"rgba(255,255,255,0.05)":"rgba(0,0,0,0.05)"} 75%);
-            background-size:200% 100%;
-            animation:zfShimmer 1.4s linear infinite;
-          }
-
-          /* Foco de teclado visível em tudo que é interativo */
-          .zf-focus{outline:none;}
-          .zf-focus:focus-visible{outline:2px solid ${gl(activeTheme.c0,0.7)};outline-offset:2px;}
-
-          /* Acessibilidade: respeita preferência por menos movimento */
-          @media (prefers-reduced-motion: reduce){
-            .zf-in,.zf-row,.zf-page{animation:none;}
-            .zf-live::after{animation:none;display:none;}
-            .zf-card, .zf-card:hover{transform:none;transition:none;}
-            .zf-shimmer{animation:none;}
-            *{transition-duration:.01ms !important;animation-duration:.01ms !important;}
-          }
-        `}</style>
-
-        {/* Grain sutil sobre toda a UI — tira o aspecto "flat" de tela gerada */}
-        <div aria-hidden="true" style={{position:"fixed", inset:0, zIndex:999,
-          pointerEvents:"none", mixBlendMode:"soft-light",
-          opacity:mode==="dark"?0.08:0.05,
-          backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`}}/>
-
-        {/* Global topbar */}
-        <div style={{display:"flex",alignItems:"center",
-          background:D.bg1,borderBottom:`1px solid ${D.bdr}`,
-          padding:mob?"0 14px":"0 24px",
-          position:"sticky",top:0,zIndex:50,height:58,flexShrink:0,
-          boxShadow:`0 1px 4px ${D.shadow}`,
-          transition:"background .3s, border-color .3s"}}>
-
-          <div style={{display:"flex",alignItems:"center",marginRight:mob?12:24,flexShrink:0}}>
-            <img src={zafraLogo} alt="Zafra"
-              style={{height:mob?34:46,width:"auto",objectFit:"contain",
-                transition:"filter .4s",
-                filter:mode==="dark"
-                  ?`drop-shadow(0 0 7px ${gl(activeTheme.c0,0.18)})`
-                  :`drop-shadow(0 0 5px ${gl(activeTheme.c0,0.12)}) brightness(0)`}}/>
-          </div>
-
-          <div style={{width:1,height:18,background:D.bdr,marginRight:mob?12:20}}/>
-
-          <ClientSwitcher tab={tab} setTab={setTab} mob={mob}/>
-
-          <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:12}}>
-            <ThemeToggle mode={mode} onChange={setMode}/>
-            <img src={manychatLogo} alt="ManyChat"
-              style={{height:mob?20:28,width:"auto",objectFit:"contain",
-                opacity:mode==="dark"?0.65:0.5,
-                filter:mode==="light"?"brightness(0)":"none"}}/>
-          </div>
-        </div>
-
-        <div style={{display:"flex",flex:1}}>
-          <EcosystemPage key={TABS[tab].ecoKey} ecoKey={TABS[tab].ecoKey}/>
-        </div>
+      {/* Logo revelado por cortina — a assinatura da abertura */}
+      <div style={{ position:"relative", overflow:"hidden", zIndex:1 }}>
+        <motion.img src={zafraLogo} alt="Zafra"
+          initial={{ opacity:0 }}
+          animate={{ opacity:1 }}
+          transition={{ duration:0.3, delay:0.15 }}
+          style={{
+            height:72, width:"auto", objectFit:"contain", display:"block",
+            filter: mode === "light" ? "brightness(0)" : "none",
+          }}/>
+        <motion.span aria-hidden="true"
+          initial={{ scaleX:1 }}
+          animate={{ scaleX:0 }}
+          transition={{ duration:0.65, delay:0.2, ease:EASE }}
+          style={{ position:"absolute", inset:0, background:D.bg, originX:0 }}/>
       </div>
-    </ThemeCtx.Provider>
+
+      {/* Traço que se desenha ao final da cortina — fecha o gesto */}
+      <motion.span aria-hidden="true"
+        initial={{ scaleX:0 }}
+        animate={{ scaleX:1 }}
+        transition={{ duration:0.4, delay:0.88, ease:EASE }}
+        style={{
+          width:40, height:1.5, borderRadius:R.pill, background:accent,
+          originX:0.5, zIndex:1,
+        }}/>
+
+      {/* Rótulo + status, um único bloco que sobe depois do traço */}
+      <motion.div
+        initial={{ opacity:0, y:8 }}
+        animate={{ opacity:1, y:0 }}
+        transition={{ duration:0.5, delay:1.0, ease:EASE }}
+        style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:SP[4], zIndex:1 }}>
+
+        <div style={{ ...T.eyebrow, fontSize:9, color:D.t2 }}>
+          Painel de automações · ManyChat
+        </div>
+
+        <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.i key={icon} className={`ti ${icon}${connecting ? " spinning" : ""}`}
+              aria-hidden="true"
+              initial={{ opacity:0, scale:0.6 }}
+              animate={{ opacity:1, scale:1 }}
+              exit={{ opacity:0, scale:0.6 }}
+              transition={{ duration:0.2 }}
+              style={{ fontSize:12, color:iconColor }}/>
+          </AnimatePresence>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span key={label}
+              initial={{ opacity:0, y:3 }}
+              animate={{ opacity:1, y:0 }}
+              exit={{ opacity:0, y:-3 }}
+              transition={{ duration:0.2 }}
+              style={{ ...T.mono, fontSize:10.5, color:D.t1 }}>
+              {label}
+            </motion.span>
+          </AnimatePresence>
+        </div>
+
+        <div style={{
+          width:120, height:2, borderRadius:R.pill, overflow:"hidden",
+          background:D.track, position:"relative",
+        }}>
+          <AnimatePresence mode="wait" initial={false}>
+            {connecting ? (
+              <motion.span key="indeterminate"
+                initial={{ left:"-38%", opacity:0 }}
+                animate={{ left:"100%", opacity:1 }}
+                exit={{ opacity:0 }}
+                transition={{
+                  left:{ duration:1.1, repeat:Infinity, ease:"easeInOut" },
+                  opacity:{ duration:0.15 },
+                }}
+                style={{
+                  position:"absolute", top:0, bottom:0, width:"38%", borderRadius:R.pill,
+                  background:gl(accent, 0.65),
+                }}/>
+            ) : (
+              <motion.span key="fill"
+                initial={{ scaleX:0 }}
+                animate={{ scaleX:1 }}
+                exit={{ opacity:0 }}
+                transition={{ duration:0.35, ease:EASE }}
+                style={{
+                  display:"block", height:"100%", width:"100%", originX:0,
+                  borderRadius:R.pill,
+                  background: status.error ? D.err : accent,
+                }}/>
+            )}
+          </AnimatePresence>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   17. RAIZ
+   ═════════════════════════════════════════════════════════════════════════ */
+
+export default function App() {
+  const [tab, setTab] = useState(0);
+  const [mode, setMode] = useState(() => {
+    try { return localStorage.getItem("zafra-theme") || "dark"; } catch { return "dark"; }
+  });
+  const [splash, setSplash] = useState(shouldPlaySplash);
+  const [status, setStatus] = useState({ loading:true, error:null, timeStr:null });
+  const mob = useIsMobile();
+  const D = PALETTES[mode];
+  const activeTheme = THEMES[TABS[tab].ecoKey];
+
+  useEffect(() => {
+    try { localStorage.setItem("zafra-theme", mode); } catch { /* storage indisponível */ }
+  }, [mode]);
+
+  const endSplash = useCallback(() => setSplash(false), []);
+
+  const handleStatus = useCallback((s) => {
+    setStatus(prev =>
+      prev.loading === s.loading && prev.error === s.error && prev.timeStr === s.timeStr
+        ? prev
+        : s
+    );
+  }, []);
+
+  return (
+    /* reducedMotion="user" respeita a preferência do sistema em tempo real:
+       o Motion desliga sozinho transform e layout, e mantém opacidade e cor. */
+    <MotionConfig reducedMotion="user">
+      <ThemeCtx.Provider value={mode}>
+        <AnimatePresence>
+          {splash && (
+            <SplashScreen key="splash" mode={mode} accent={activeTheme.c0}
+              status={status} onDone={endSplash}/>
+          )}
+        </AnimatePresence>
+
+        <div style={{
+          display:"flex", flexDirection:"column", minHeight:"100vh",
+          background:D.bg, fontFamily:F.b, color:D.t0, overflowX:"hidden",
+          transition:"background .3s, color .3s",
+        }}>
+          <style>{`
+            @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Instrument+Sans:wght@400..700&family=DM+Mono:wght@400;500&display=swap');
+            @import url('https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css');
+
+            *{box-sizing:border-box;}
+            html,body,#root{margin:0;padding:0;width:100%;min-height:100%;overflow-x:hidden;}
+            body{background:${D.bg};transition:background .3s;-webkit-font-smoothing:antialiased;}
+            button{font:inherit;}
+            ::selection{background:${gl(activeTheme.c0, 0.28)};}
+
+            ::-webkit-scrollbar{width:6px;height:6px;}
+            ::-webkit-scrollbar-track{background:transparent;}
+            ::-webkit-scrollbar-thumb{background:${mode === "dark" ? "rgba(255,255,255,0.09)" : "rgba(17,17,26,0.14)"};border-radius:3px;}
+            ::-webkit-scrollbar-thumb:hover{background:${mode === "dark" ? "rgba(255,255,255,0.17)" : "rgba(17,17,26,0.24)"};}
+
+            @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+            .spinning{animation:spin 1s linear infinite;display:inline-block;}
+
+            /* ── Fundo, pulso e shimmer ───────────────────────────────
+               Loops infinitos decorativos continuam no CSS: o compositor do
+               navegador faz isso mais barato que qualquer engine JS. */
+            .zf-bg > *{position:absolute;display:block;}
+
+            .zf-bg-cursor{top:0;left:0;right:0;bottom:0;}
+
+            .zf-bg-blob{border-radius:50%;filter:blur(70px);will-change:transform;}
+            .zf-bg-blob-a{
+              width:min(620px,70vw);height:min(620px,70vw);
+              top:-22%;left:6%;background:var(--c-soft);
+              animation:zfDriftA 26s ease-in-out infinite alternate;
+            }
+            .zf-bg-blob-b{
+              width:min(520px,60vw);height:min(520px,60vw);
+              top:8%;right:2%;background:var(--c-faint);
+              animation:zfDriftB 34s ease-in-out infinite alternate;
+            }
+            @keyframes zfDriftA{
+              0%{transform:translate3d(0,0,0) scale(1);}
+              50%{transform:translate3d(7vw,4vh,0) scale(1.12);}
+              100%{transform:translate3d(-3vw,9vh,0) scale(0.96);}
+            }
+            @keyframes zfDriftB{
+              0%{transform:translate3d(0,0,0) scale(1.04);}
+              50%{transform:translate3d(-8vw,6vh,0) scale(0.92);}
+              100%{transform:translate3d(2vw,-4vh,0) scale(1.1);}
+            }
+
+            @keyframes zfPing{0%{transform:scale(1);opacity:.4}70%,100%{transform:scale(2.4);opacity:0}}
+            .zf-live{position:relative;}
+            .zf-live::after{content:"";position:absolute;inset:0;border-radius:50%;
+              background:inherit;animation:zfPing 2.6s cubic-bezier(0,0,.2,1) infinite;}
+
+            @keyframes zfShimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+            .zf-shimmer{
+              background:linear-gradient(90deg,
+                ${mode === "dark" ? "rgba(255,255,255,0.045)" : "rgba(17,17,26,0.045)"} 25%,
+                ${mode === "dark" ? "rgba(255,255,255,0.09)"  : "rgba(17,17,26,0.08)"} 50%,
+                ${mode === "dark" ? "rgba(255,255,255,0.045)" : "rgba(17,17,26,0.045)"} 75%);
+              background-size:200% 100%;
+              animation:zfShimmer 1.4s linear infinite;
+            }
+
+            /* No mobile não há cursor: só as manchas, com blur mais barato */
+            @media (max-width:768px){
+              .zf-bg-cursor{display:none;}
+              .zf-bg-blob{filter:blur(52px);}
+            }
+
+            .zf-focus{outline:none;}
+            .zf-focus:focus-visible{outline:2px solid ${gl(activeTheme.c0, 0.75)};outline-offset:2px;border-radius:${R.xs}px;}
+
+            /* O Motion já respeita a preferência via MotionConfig. Aqui ficam
+               só os loops que ele não controla. */
+            @media (prefers-reduced-motion: reduce){
+              .zf-bg-blob{animation:none;}
+              .zf-bg-cursor{display:none;}
+              .zf-live::after{animation:none;display:none;}
+              .zf-shimmer{animation:none;}
+            }
+          `}</style>
+
+          {/* Grão sutil sobre a interface */}
+          <div aria-hidden="true" style={{
+            position:"fixed", inset:0, zIndex:999, pointerEvents:"none",
+            mixBlendMode:"soft-light", opacity: mode === "dark" ? 0.06 : 0.035,
+            backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
+          }}/>
+
+          {/* Topbar */}
+          <header style={{
+            display:"flex", alignItems:"center", gap: mob ? SP[3] : SP[5],
+            height:TOPBAR_H, flexShrink:0, padding: mob ? `0 ${SP[4]}px` : `0 ${SP[6]}px`,
+            background: mode === "dark" ? gl("#111114", 0.85) : gl("#FFFFFF", 0.88),
+            backdropFilter:"blur(12px)", WebkitBackdropFilter:"blur(12px)",
+            borderBottom:`1px solid ${D.bdr}`,
+            position:"sticky", top:0, zIndex:50,
+            transition:"background .3s, border-color .3s",
+          }}>
+            <motion.img src={zafraLogo} alt="Zafra"
+              animate={{
+                filter: mode === "light"
+                  ? "brightness(0)"
+                  : `drop-shadow(0 0 8px ${gl(activeTheme.c0, 0.16)})`,
+              }}
+              transition={{ duration:0.35, ease:EASE }}
+              style={{
+                height: mob ? 40 : 52, width:"auto", objectFit:"contain", flexShrink:0,
+              }}/>
+
+            <span aria-hidden="true" style={{ width:1, height:22, background:D.bdr, flexShrink:0 }}/>
+
+            <ClientSwitcher tab={tab} setTab={setTab} mob={mob}/>
+
+            <div style={{ marginLeft:"auto", display:"flex", alignItems:"center",
+              gap: mob ? SP[2] : SP[4], flexShrink:0 }}>
+              {!mob && <StatusPill loading={status.loading} error={status.error} timeStr={status.timeStr}/>}
+              <ThemeToggle mode={mode} onChange={setMode}/>
+              {!mob && <span aria-hidden="true" style={{ width:1, height:20, background:D.bdr }}/>}
+              <img src={manychatLogo} alt="ManyChat" style={{
+                height: mob ? 16 : 22, width:"auto", objectFit:"contain",
+                opacity: mode === "dark" ? 0.6 : 0.45,
+                filter: mode === "light" ? "brightness(0)" : "none",
+              }}/>
+            </div>
+          </header>
+
+          <div style={{ display:"flex", flex:1, minHeight:0 }}>
+            <EcosystemPage key={TABS[tab].ecoKey} ecoKey={TABS[tab].ecoKey} onStatus={handleStatus}/>
+          </div>
+        </div>
+      </ThemeCtx.Provider>
+    </MotionConfig>
   );
 }
